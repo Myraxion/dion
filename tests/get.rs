@@ -75,7 +75,7 @@ fn distinguishes_empty_records_missing_records_and_argument_errors() {
     for args in [
         vec!["get", "missing", "--json"],
         vec!["--json", "get"],
-        vec!["--json", "list"],
+        vec!["--json", "unknown"],
         vec!["get", "empty", "extra", "--json"],
     ] {
         let result = get(directory.path(), &args);

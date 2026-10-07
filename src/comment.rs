@@ -9,6 +9,7 @@ pub enum Extension {
     Unknown,
 }
 
+#[derive(serde::Serialize)]
 pub struct Record<'a> {
     pub name: &'a str,
     pub comment: Cow<'a, str>,

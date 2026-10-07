@@ -2,7 +2,7 @@
 
 Dion 是一款轻量、高性能、零外部运行依赖的 Windows 原生命令行工具，主用于以 Total Commander 的 **UTF-8 Unicode 编码** 标准查看、设置、编辑与维护 `descript.ion` 文件备注。
 
-第一版实施规格见 [GitHub Issue #1](https://github.com/Myraxion/dion/issues/1)。当前已实现 [Issue #2](https://github.com/Myraxion/dion/issues/2) 的单行备注查询及 [Issue #3](https://github.com/Myraxion/dion/issues/3) 的 TC 多行与程序扩展读取；完整规格包括后续切片，见 [实施规格](docs/spec.md)、[设计规则](docs/design.md) 和 [领域词汇表](GLOSSARY.md)。
+第一版实施规格见 [GitHub Issue #1](https://github.com/Myraxion/dion/issues/1)。当前已实现 [Issue #2](https://github.com/Myraxion/dion/issues/2) 的单行备注查询、[Issue #3](https://github.com/Myraxion/dion/issues/3) 的 TC 多行与程序扩展读取及 [Issue #4](https://github.com/Myraxion/dion/issues/4) 的目录备注列表；完整规格包括后续切片，见 [实施规格](docs/spec.md)、[设计规则](docs/design.md) 和 [领域词汇表](GLOSSARY.md)。
 
 开发任务与直接依赖见 [任务索引](docs/tickets.md)，首个任务为 [Issue #2](https://github.com/Myraxion/dion/issues/2)。
 
@@ -14,6 +14,8 @@ Dion 是一款轻量、高性能、零外部运行依赖的 Windows 原生命令
 cargo build --release --locked
 .\target\release\dion.exe get '.\照片 😀.txt'
 .\target\release\dion.exe get 'D:\资料\文件夹' --json
+.\target\release\dion.exe list
+.\target\release\dion.exe list 'D:\资料' --json
 ```
 
 分发 `target/release/dion.exe` 即可；仓库配置静态链接 MSVC CRT，用户无需安装 Rust 或额外运行时。目标平台为 Windows 10/11 x64。
@@ -31,7 +33,9 @@ cargo build --release --locked
 | 2 | 参数错误 | `invalid_argument` |
 | 3 | 缺失备注记录或备注文件 | `not_found` |
 
-带 TC UTF-8 扩展标记 `04 C3 82` 的记录将 `\n` 解码为逻辑 LF、`\\` 解码为反斜杠，保留缩进、首尾空白、连续空行和尾部换行数量。无标记记录的反斜杠按字面读取；未知程序扩展只读取控制字符 `04` 前的普通正文，不解释转义。未知反斜杠组合及末尾反斜杠按字面保留，这是 Dion 的产品规则，尚未完整核验 TC 对非标准转义的行为。`list`、`set`、`remove` 尚未实现。
+`list [directory]` 读取指定目录的备注文件，省略目录时使用当前目录。保持记录原始顺序，不检查记录所指条目是否存在，不递归；空记录、孤立记录和未知扩展记录都会列出。文本模式每条记录输出名称加冒号、LF、完整正文及一个用于分隔记录的 LF；JSON 返回 `{"entries":[{"name":"…","comment":"…","extension":"none"}]}`。备注文件不存在、仅有 BOM 或合法空行时成功返回空列表，文本输出为空，JSON 为 `{"entries":[]}`；已有零字节文件因缺少 BOM 报编码错误。目录或备注文件无法访问时返回操作错误。
+
+带 TC UTF-8 扩展标记 `04 C3 82` 的记录将 `\n` 解码为逻辑 LF、`\\` 解码为反斜杠，保留缩进、首尾空白、连续空行和尾部换行数量。无标记记录的反斜杠按字面读取；未知程序扩展只读取控制字符 `04` 前的普通正文，不解释转义。未知反斜杠组合及末尾反斜杠按字面保留，这是 Dion 的产品规则，尚未完整核验 TC 对非标准转义的行为。`set`、`remove` 尚未实现。
 
 ## 开发验证
 

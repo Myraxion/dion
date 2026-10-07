@@ -13,7 +13,7 @@ pub fn run() -> ExitCode {
         .iter()
         .take_while(|arg| *arg != "--")
         .any(|arg| arg == "--json");
-    match parse_args(&args).and_then(|args| get(&args, json)) {
+    match parse_args(&args).and_then(|args| execute(&args, json)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             let mut stderr = io::stderr().lock();
@@ -58,14 +58,40 @@ fn parse_args(args: &[OsString]) -> Result<Vec<OsString>, Error> {
     Ok(positional)
 }
 
-fn get(args: &[OsString], json: bool) -> Result<(), Error> {
-    if args.len() != 2 || args[0] != "get" {
-        return Err(Error::new(
+fn execute(args: &[OsString], json: bool) -> Result<(), Error> {
+    match args.first().and_then(|arg| arg.to_str()) {
+        Some("get") if args.len() == 2 => get(args, json),
+        Some("list") if args.len() <= 2 => list(args, json),
+        _ => Err(Error::new(
             "invalid_argument",
-            "Usage: dion [--json] get <path> [--json]",
+            "Usage: dion [--json] get <path> [--json] | list [directory] [--json]",
             2,
-        ));
+        )),
     }
+}
+
+fn list(args: &[OsString], json: bool) -> Result<(), Error> {
+    let directory = args
+        .get(1)
+        .map_or_else(|| PathBuf::from("."), PathBuf::from);
+    let file = directory.join("descript.ion");
+    let bytes = storage::read(&file)?;
+    let records = match &bytes {
+        Some(bytes) => comment::parse(bytes).map_err(|error| error.at_file(&file))?,
+        None => Vec::new(),
+    };
+    let mut output = io::stdout().lock();
+    let result = if json {
+        write_json(&mut output, &serde_json::json!({ "entries": records }))
+    } else {
+        records
+            .iter()
+            .try_for_each(|record| writeln!(output, "{}:\n{}", record.name, record.comment))
+    };
+    result.map_err(|error| Error::new("io_error", error.to_string(), 1))
+}
+
+fn get(args: &[OsString], json: bool) -> Result<(), Error> {
     let path = PathBuf::from(&args[1]);
     let name = path
         .file_name()
