@@ -1,6 +1,17 @@
 use crate::error::Error;
 use std::{fs, io, path::Path};
 
+#[cfg(windows)]
+mod windows;
+
+#[cfg(windows)]
+pub use windows::commit;
+
+#[cfg(not(windows))]
+pub fn commit(file: &Path, _original: Option<&[u8]>, _bytes: &[u8]) -> Result<(), Error> {
+    Err(Error::new("io_error", "Writing comments requires Windows", 1).at_file(file))
+}
+
 pub fn read(file: &Path) -> Result<Option<Vec<u8>>, Error> {
     match fs::read(file) {
         Ok(bytes) => Ok(Some(bytes)),

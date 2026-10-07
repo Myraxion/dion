@@ -62,12 +62,55 @@ fn execute(args: &[OsString], json: bool) -> Result<(), Error> {
     match args.first().and_then(|arg| arg.to_str()) {
         Some("get") if args.len() == 2 => get(args, json),
         Some("list") if args.len() <= 2 => list(args, json),
+        Some("set") if args.len() == 3 => set(args, json),
         _ => Err(Error::new(
             "invalid_argument",
-            "Usage: dion [--json] get <path> [--json] | list [directory] [--json]",
+            "Usage: dion [--json] get <path> | list [directory] | set <path> <comment>",
             2,
         )),
     }
+}
+
+fn set(args: &[OsString], json: bool) -> Result<(), Error> {
+    let path = PathBuf::from(&args[1]);
+    if path.as_os_str().is_empty() {
+        return Err(Error::new("invalid_argument", "Path must not be empty", 2));
+    }
+    // Resolve dot components without following the target entry's symbolic link.
+    let path = std::path::absolute(&path).map_err(|error| Error::io(error, &path))?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| Error::new("invalid_argument", "Path must have a UTF-8 entry name", 2))?;
+    let body = args[2]
+        .to_str()
+        .ok_or_else(|| Error::new("invalid_argument", "Comment must be UTF-8", 2))?;
+    if body.trim().is_empty() || body.contains(['\0', '\u{4}', '\r', '\n']) {
+        return Err(Error::new(
+            "invalid_argument",
+            "A nonblank single-line comment without NUL or control character 04 is required",
+            2,
+        ));
+    }
+    std::fs::symlink_metadata(&path).map_err(|error| Error::io(error, &path))?;
+    let file = path
+        .parent()
+        .ok_or_else(|| Error::new("invalid_argument", "Path has no parent", 2))?
+        .join("descript.ion");
+    let original = storage::read(&file)?;
+    let bytes =
+        comment::set(original.as_deref(), name, body).map_err(|error| error.at_file(&file))?;
+    if let Some(bytes) = &bytes {
+        storage::commit(&file, original.as_deref(), bytes)?;
+    }
+    if json {
+        write_json(
+            &mut io::stdout().lock(),
+            &serde_json::json!({"changed": bytes.is_some()}),
+        )
+        .map_err(|error| Error::new("io_error", error.to_string(), 1))?;
+    }
+    Ok(())
 }
 
 fn list(args: &[OsString], json: bool) -> Result<(), Error> {

@@ -1,5 +1,5 @@
 use crate::error::Error;
-use std::{borrow::Cow, collections::HashSet};
+use std::{borrow::Cow, collections::HashSet, ops::Range};
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -14,6 +14,10 @@ pub struct Record<'a> {
     pub name: &'a str,
     pub comment: Cow<'a, str>,
     pub extension: Extension,
+    #[serde(skip)]
+    pub range: Range<usize>,
+    #[serde(skip)]
+    pub line: usize,
 }
 
 pub fn parse(bytes: &[u8]) -> Result<Vec<Record<'_>>, Error> {
@@ -46,6 +50,7 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Record<'_>>, Error> {
                 line_number,
             ));
         }
+        let start = bytes.len() - remaining.len();
         remaining = &remaining[end + terminator..];
         if line.is_empty() {
             continue;
@@ -95,9 +100,66 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Record<'_>>, Error> {
             name,
             comment,
             extension,
+            range: start..start + end + terminator,
+            line: line_number,
         });
     }
     Ok(records)
+}
+
+pub fn set(original: Option<&[u8]>, name: &str, body: &str) -> Result<Option<Vec<u8>>, Error> {
+    let bytes = original.unwrap_or(b"\xef\xbb\xbf\r\n");
+    let records = parse(bytes)?;
+    let key = name.to_lowercase();
+    let target = records
+        .iter()
+        .find(|record| record.name.to_lowercase() == key);
+    if let Some(record) = target {
+        if matches!(record.extension, Extension::Unknown) {
+            return Err(Error::new(
+                "unknown_extension",
+                "Unknown extension; cannot modify this record",
+                1,
+            ));
+        }
+        if record.comment == body {
+            return Ok(None);
+        }
+    }
+    let name = target.map_or(name, |record| record.name);
+    let record = if name.contains(' ') {
+        format!("\"{name}\" {body}\r\n")
+    } else {
+        format!("{name} {body}\r\n")
+    };
+    if record.len() > 4096 {
+        let mut error = Error::new("invalid_format", "Serialized record exceeds 4096 bytes", 1);
+        error.line = target.map(|record| record.line);
+        return Err(error);
+    }
+    let mut updated = Vec::with_capacity(bytes.len() + record.len());
+    if let Some(target) = target {
+        updated.extend_from_slice(&bytes[..target.range.start]);
+        updated.extend_from_slice(record.as_bytes());
+        updated.extend_from_slice(&bytes[target.range.end..]);
+    } else {
+        updated.extend_from_slice(bytes);
+        if bytes.len() > 3 && !bytes.ends_with(b"\r") && !bytes.ends_with(b"\n") {
+            if let Some(record) = records
+                .last()
+                .filter(|record| record.range.len() + 2 > 4096)
+            {
+                return Err(at_line(
+                    "invalid_format",
+                    "Final record exceeds 4096 bytes after adding CRLF",
+                    record.line,
+                ));
+            }
+            updated.extend_from_slice(b"\r\n");
+        }
+        updated.extend_from_slice(record.as_bytes());
+    }
+    Ok(Some(updated))
 }
 
 fn decode_tc(body: &str) -> String {
