@@ -25,6 +25,8 @@ cargo build --release --locked
 
 四个命令支持相对、绝对和 Windows 长路径，包括 `\\?\D:\资料\条目` 与扩展 UNC 形式 `\\?\UNC\server\share\条目`。路径中的 `.`、`..` 按词法处理，不解析最终链接目标。文件夹自身的 `get/set/remove` 使用父目录备注文件；`list` 使用文件夹内部的备注文件。文件和文件夹符号链接、目录联接的自身备注保存在输入链接条目所在父目录；`list` 链接目录时读取该目录内部的备注。磁盘根和 UNC 共享根可用于 `list`，根自身的 `get/set/remove` 返回参数错误（退出码 2）。
 
+第一版的 UNC 支持声明限定为经过验收的 Windows SMB 环境；目前仅 Windows SMB 本机回环已验证，独立远端 Windows SMB 服务端验收待完成。UNC 是路径形式，不代表所有后端服务兼容。WebDAV 不在支持声明内，Samba/NAS 尚未验收；WinFsp 挂载盘不能替代 SMB 验收。具体环境和实测限制见 [UNC 验证](docs/unc-validation.md)。
+
 文本模式只输出正文，不追加换行。`--json` 可放在命令之前或路径之后，成功输出包含 `name`、`comment`、`extension`（`none`、`tc` 或 `unknown`），保留记录原名称拼写；JSON 为无 BOM 的 UTF-8，以 LF 结束。以 `-` 开头的路径放在 `--` 后，例如 `dion get -- --json`。
 
 错误写入 stderr，正常结果写入 stdout。指定 `--json` 时错误为 `{"error":{"code":"…","message":"…","file":"…","line":1}}`；`file`、物理行号 `line` 仅在适用时提供。完整文件校验通过后才输出结果。
@@ -78,7 +80,7 @@ Windows PowerShell 5.1 的默认文本管道可能在内容到达 Dion 前损坏
 
 测试使用可复现的合成备注文件，在隔离目录启动真实 CLI 进程，检查输出、退出码、字节及 Windows 属性。真实 UNC 验收入口、已执行环境与限制见 [UNC 验证](docs/unc-validation.md)。设置 `DION_UNC_ROOT` 后统一检查会运行真实共享测试；未设置时明确输出 `UNVERIFIED`。TC 互操作与 Release 性能基线留给对应后续任务。
 
-Issue #8 的本地黑盒测试已验证超过 260 字符的相对、绝对及扩展路径、Unicode、孤立记录、磁盘根边界、文件夹自身与内部备注区别，以及文件/文件夹符号链接和目录联接实际读写的备注文件。Issue #9 已补充真实 SMB 共享的普通与扩展 UNC、共享根列出、读写删除、属性与权限、占用及恢复文件验收；当前验证范围为 Windows SMB 回环，远端和断网场景未验证，详见 [验收记录](docs/unc-validation.md)。符号链接创建权限不足时测试输出 `UNVERIFIED`，不能据此报告该场景通过。
+Issue #8 的本地黑盒测试已验证超过 260 字符的相对、绝对及扩展路径、Unicode、孤立记录、磁盘根边界、文件夹自身与内部备注区别，以及文件/文件夹符号链接和目录联接实际读写的备注文件。Issue #9 已补充真实 SMB 共享的普通与扩展 UNC、共享根列出、读写删除、属性与权限、占用及恢复文件验收；当前仅 Windows SMB 回环验收通过，Issue #9 保留独立远端 Windows SMB 验收待办，不能报为完整 UNC 兼容。断网场景未验证，详见 [验收记录](docs/unc-validation.md)。符号链接创建权限不足时测试输出 `UNVERIFIED`，不能据此报告该场景通过。
 
 ## 许可证 (License)
 
