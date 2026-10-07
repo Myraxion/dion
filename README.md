@@ -47,11 +47,10 @@ cargo build --release --locked
 ## 开发验证
 
 ```powershell
-cargo fmt --check
-cargo clippy --all-targets --all-features --locked -- -D warnings
-cargo test --locked
-cargo build --release --locked
+.\scripts\check.ps1
 ```
+
+脚本依次检查格式、clippy、完整测试和 Release 构建，失败立即退出；Windows CI 使用同一入口。环境排查经验见 [Rust 实践](docs/rust-practices.md#windows-开发环境)。
 
 测试使用可复现的合成备注文件，在隔离目录启动真实 CLI 进程，检查输出、退出码、字节及 Windows 属性。真实 UNC、TC 互操作与 Release 性能基线留给对应后续任务。
 

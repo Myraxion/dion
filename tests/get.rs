@@ -148,7 +148,10 @@ fn validates_the_whole_file_before_output_and_reports_physical_lines() {
         assert!(result.stderr.ends_with(b"\n"));
         let error: serde_json::Value = serde_json::from_slice(&result.stderr).unwrap();
         assert_eq!(error["error"]["code"], code);
-        assert_eq!(error["error"]["file"], "descript.ion");
+        assert_eq!(
+            error["error"]["file"],
+            directory.path().join("descript.ion").to_str().unwrap()
+        );
         assert_eq!(
             error["error"]["line"].as_u64(),
             line.map(|value| value as u64)
@@ -305,7 +308,10 @@ fn a_sharing_violation_is_an_io_error() {
     assert!(result.stdout.is_empty());
     let error: serde_json::Value = serde_json::from_slice(&result.stderr).unwrap();
     assert_eq!(error["error"]["code"], "io_error");
-    assert_eq!(error["error"]["file"], "descript.ion");
+    assert_eq!(
+        error["error"]["file"],
+        directory.path().join("descript.ion").to_str().unwrap()
+    );
 }
 
 #[test]
@@ -422,7 +428,10 @@ fn mixed_extensions_still_require_whole_file_validation() {
         assert!(result.stdout.is_empty());
         let error: serde_json::Value = serde_json::from_slice(&result.stderr).unwrap();
         assert_eq!(error["error"]["code"], code);
-        assert_eq!(error["error"]["file"], "descript.ion");
+        assert_eq!(
+            error["error"]["file"],
+            directory.path().join("descript.ion").to_str().unwrap()
+        );
         assert_eq!(error["error"]["line"], 5);
         assert_eq!(
             fs::read(directory.path().join("descript.ion")).unwrap(),

@@ -72,12 +72,7 @@ fn execute(args: &[OsString], json: bool) -> Result<(), Error> {
 }
 
 fn set(args: &[OsString], json: bool) -> Result<(), Error> {
-    let path = PathBuf::from(&args[1]);
-    if path.as_os_str().is_empty() {
-        return Err(Error::new("invalid_argument", "Path must not be empty", 2));
-    }
-    // Resolve dot components without following the target entry's symbolic link.
-    let path = std::path::absolute(&path).map_err(|error| Error::io(error, &path))?;
+    let path = entry_path(&args[1])?;
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -135,7 +130,7 @@ fn list(args: &[OsString], json: bool) -> Result<(), Error> {
 }
 
 fn get(args: &[OsString], json: bool) -> Result<(), Error> {
-    let path = PathBuf::from(&args[1]);
+    let path = entry_path(&args[1])?;
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -164,6 +159,15 @@ fn get(args: &[OsString], json: bool) -> Result<(), Error> {
         output.write_all(record.comment.as_bytes())
     };
     result.map_err(|error| Error::new("io_error", error.to_string(), 1))
+}
+
+fn entry_path(argument: &OsString) -> Result<PathBuf, Error> {
+    let path = PathBuf::from(argument);
+    if path.as_os_str().is_empty() {
+        return Err(Error::new("invalid_argument", "Path must not be empty", 2));
+    }
+    // Resolve dot components without following the target entry's symbolic link.
+    std::path::absolute(&path).map_err(|error| Error::io(error, &path))
 }
 
 fn write_json(output: &mut impl Write, value: &impl serde::Serialize) -> io::Result<()> {
