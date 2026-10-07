@@ -2,7 +2,7 @@
 
 Dion 是一款轻量、高性能、零外部运行依赖的 Windows 原生命令行工具，主用于以 Total Commander 的 **UTF-8 Unicode 编码** 标准查看、设置、编辑与维护 `descript.ion` 文件备注。
 
-第一版实施规格见 [GitHub Issue #1](https://github.com/Myraxion/dion/issues/1)。当前已实现 [Issue #2](https://github.com/Myraxion/dion/issues/2) 的单行备注查询、[Issue #3](https://github.com/Myraxion/dion/issues/3) 的 TC 多行与程序扩展读取、[Issue #4](https://github.com/Myraxion/dion/issues/4) 的目录备注列表、[Issue #5](https://github.com/Myraxion/dion/issues/5) 的单行设置与 Windows 文件提交、[Issue #6](https://github.com/Myraxion/dion/issues/6) 的多行设置与三种输入来源及 [Issue #7](https://github.com/Myraxion/dion/issues/7) 的删除备注与最后记录清理；完整规格包括后续切片，见 [实施规格](docs/spec.md)、[设计规则](docs/design.md) 和 [领域词汇表](GLOSSARY.md)。
+第一版实施规格见 [GitHub Issue #1](https://github.com/Myraxion/dion/issues/1)。当前已实现 [Issue #2](https://github.com/Myraxion/dion/issues/2) 的单行备注查询、[Issue #3](https://github.com/Myraxion/dion/issues/3) 的 TC 多行与程序扩展读取、[Issue #4](https://github.com/Myraxion/dion/issues/4) 的目录备注列表、[Issue #5](https://github.com/Myraxion/dion/issues/5) 的单行设置与 Windows 文件提交、[Issue #6](https://github.com/Myraxion/dion/issues/6) 的多行设置与三种输入来源、[Issue #7](https://github.com/Myraxion/dion/issues/7) 的删除备注与最后记录清理及 [Issue #8](https://github.com/Myraxion/dion/issues/8) 的 Windows 长路径、根与链接定位；完整规格包括后续切片，见 [实施规格](docs/spec.md)、[设计规则](docs/design.md) 和 [领域词汇表](GLOSSARY.md)。
 
 开发任务与直接依赖见 [任务索引](docs/tickets.md)，首个任务为 [Issue #2](https://github.com/Myraxion/dion/issues/2)。
 
@@ -22,6 +22,8 @@ cargo build --release --locked
 分发 `target/release/dion.exe` 即可；仓库配置静态链接 MSVC CRT，用户无需安装 Rust 或额外运行时。目标平台为 Windows 10/11 x64。
 
 `get` 从输入路径的父目录读取 `descript.ion`，目标文件或文件夹可以不存在。备注文件须为带 BOM 的 UTF-8；接受 CRLF、LF、CR 以及末条无终止换行。含空格的记录名称用双引号包围，名称后第一个空格是分隔符，其后的正文首尾空白原样保留。名称匹配与重复检测使用 Unicode 小写转换，不依赖目录的大小写设置。
+
+四个命令支持相对、绝对和 Windows 长路径，包括 `\\?\D:\资料\条目` 与扩展 UNC 形式 `\\?\UNC\server\share\条目`。路径中的 `.`、`..` 按词法处理，不解析最终链接目标。文件夹自身的 `get/set/remove` 使用父目录备注文件；`list` 使用文件夹内部的备注文件。文件和文件夹符号链接、目录联接的自身备注保存在输入链接条目所在父目录；`list` 链接目录时读取该目录内部的备注。磁盘根和 UNC 共享根可用于 `list`，根自身的 `get/set/remove` 返回参数错误（退出码 2）。
 
 文本模式只输出正文，不追加换行。`--json` 可放在命令之前或路径之后，成功输出包含 `name`、`comment`、`extension`（`none`、`tc` 或 `unknown`），保留记录原名称拼写；JSON 为无 BOM 的 UTF-8，以 LF 结束。以 `-` 开头的路径放在 `--` 后，例如 `dion get -- --json`。
 
@@ -75,6 +77,8 @@ Windows PowerShell 5.1 的默认文本管道可能在内容到达 Dion 前损坏
 脚本依次检查格式、clippy、完整测试和 Release 构建，失败立即退出；Windows CI 使用同一入口。环境排查经验见 [Rust 实践](docs/rust-practices.md#windows-开发环境)。
 
 测试使用可复现的合成备注文件，在隔离目录启动真实 CLI 进程，检查输出、退出码、字节及 Windows 属性。真实 UNC、TC 互操作与 Release 性能基线留给对应后续任务。
+
+Issue #8 的本地黑盒测试已验证超过 260 字符的相对、绝对及扩展路径、Unicode、孤立记录、磁盘根边界、文件夹自身与内部备注区别，以及文件/文件夹符号链接和目录联接实际读写的备注文件。UNC 普通与扩展形式仅验证共享根的参数拒绝，不访问真实共享；UNC 根列出和共享读写留待 Issue #9。符号链接创建权限不足时测试输出 `UNVERIFIED`，不能据此报告该场景通过。
 
 ## 许可证 (License)
 
