@@ -2,7 +2,7 @@ use crate::{comment, error::Error, storage};
 use std::{
     env,
     ffi::OsString,
-    io::{self, Write},
+    io::{self, Read, Write},
     path::PathBuf,
     process::ExitCode,
 };
@@ -34,17 +34,40 @@ pub fn run() -> ExitCode {
     }
 }
 
-fn parse_args(args: &[OsString]) -> Result<Vec<OsString>, Error> {
+enum CommentSource {
+    Stdin,
+    File(PathBuf),
+}
+
+struct Arguments {
+    positional: Vec<OsString>,
+    source: Option<CommentSource>,
+}
+
+fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
     let mut positional = Vec::new();
     let mut after_separator = false;
     let mut json_seen = false;
-    for arg in args {
+    let mut source = None;
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
         if after_separator {
             positional.push(arg.clone());
         } else if arg == "--" {
             after_separator = true;
         } else if arg == "--json" && !json_seen {
             json_seen = true;
+        } else if (arg == "--stdin" || arg == "--comment-file") && source.is_none() {
+            source = Some(if arg == "--stdin" {
+                CommentSource::Stdin
+            } else {
+                let file = args.next().filter(|arg| {
+                    !arg.to_str().is_some_and(|arg| arg.starts_with('-'))
+                }).ok_or_else(|| {
+                    Error::new("invalid_argument", "--comment-file requires a file; prefix a filename starting with - with ./", 2)
+                })?;
+                CommentSource::File(PathBuf::from(file))
+            });
         } else if arg.to_str().is_some_and(|arg| arg.starts_with('-')) {
             return Err(Error::new(
                 "invalid_argument",
@@ -55,38 +78,46 @@ fn parse_args(args: &[OsString]) -> Result<Vec<OsString>, Error> {
             positional.push(arg.clone());
         }
     }
-    Ok(positional)
+    Ok(Arguments { positional, source })
 }
 
-fn execute(args: &[OsString], json: bool) -> Result<(), Error> {
+fn execute(arguments: &Arguments, json: bool) -> Result<(), Error> {
+    let args = &arguments.positional;
     match args.first().and_then(|arg| arg.to_str()) {
-        Some("get") if args.len() == 2 => get(args, json),
-        Some("list") if args.len() <= 2 => list(args, json),
-        Some("set") if args.len() == 3 => set(args, json),
+        Some("get") if args.len() == 2 && arguments.source.is_none() => get(args, json),
+        Some("list") if args.len() <= 2 && arguments.source.is_none() => list(args, json),
+        Some("set") if args.len() == if arguments.source.is_some() { 2 } else { 3 } => {
+            set(args, arguments.source.as_ref(), json)
+        }
         _ => Err(Error::new(
             "invalid_argument",
-            "Usage: dion [--json] get <path> | list [directory] | set <path> <comment>",
+            "Usage: dion [--json] get <path> | list [directory] | set <path> (<comment> | --stdin | --comment-file <file>)",
             2,
         )),
     }
 }
 
-fn set(args: &[OsString], json: bool) -> Result<(), Error> {
+fn set(args: &[OsString], source: Option<&CommentSource>, json: bool) -> Result<(), Error> {
     let path = entry_path(&args[1])?;
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or_else(|| Error::new("invalid_argument", "Path must have a UTF-8 entry name", 2))?;
-    let body = args[2]
-        .to_str()
-        .ok_or_else(|| Error::new("invalid_argument", "Comment must be UTF-8", 2))?;
-    if body.trim().is_empty() || body.contains(['\0', '\u{4}', '\r', '\n']) {
+    let body = match source {
+        None => args[2]
+            .to_str()
+            .ok_or_else(|| Error::new("invalid_argument", "Comment must be UTF-8", 2))?
+            .to_owned(),
+        Some(source) => read_comment(source)?,
+    };
+    if body.trim().is_empty() || body.contains(['\0', '\u{4}']) {
         return Err(Error::new(
             "invalid_argument",
-            "A nonblank single-line comment without NUL or control character 04 is required",
+            "A nonblank comment without NUL or control character 04 is required",
             2,
         ));
     }
+    let body = body.replace("\r\n", "\n").replace('\r', "\n");
     std::fs::symlink_metadata(&path).map_err(|error| Error::io(error, &path))?;
     let file = path
         .parent()
@@ -94,7 +125,7 @@ fn set(args: &[OsString], json: bool) -> Result<(), Error> {
         .join("descript.ion");
     let original = storage::read(&file)?;
     let bytes =
-        comment::set(original.as_deref(), name, body).map_err(|error| error.at_file(&file))?;
+        comment::set(original.as_deref(), name, &body).map_err(|error| error.at_file(&file))?;
     if let Some(bytes) = &bytes {
         storage::commit(&file, original.as_deref(), bytes)?;
     }
@@ -106,6 +137,28 @@ fn set(args: &[OsString], json: bool) -> Result<(), Error> {
         .map_err(|error| Error::new("io_error", error.to_string(), 1))?;
     }
     Ok(())
+}
+
+fn read_comment(source: &CommentSource) -> Result<String, Error> {
+    let bytes = match source {
+        CommentSource::Stdin => {
+            let mut bytes = Vec::new();
+            io::stdin()
+                .lock()
+                .read_to_end(&mut bytes)
+                .map_err(|error| Error::new("io_error", error.to_string(), 1))?;
+            bytes
+        }
+        CommentSource::File(file) => std::fs::read(file).map_err(|error| Error::io(error, file))?,
+    };
+    let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
+    std::str::from_utf8(bytes).map(str::to_owned).map_err(|_| {
+        let error = Error::new("invalid_encoding", "Comment input is not valid UTF-8", 1);
+        match source {
+            CommentSource::File(file) => error.at_file(file),
+            CommentSource::Stdin => error,
+        }
+    })
 }
 
 fn list(args: &[OsString], json: bool) -> Result<(), Error> {

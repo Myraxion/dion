@@ -127,6 +127,14 @@ pub fn set(original: Option<&[u8]>, name: &str, body: &str) -> Result<Option<Vec
         }
     }
     let name = target.map_or(name, |record| record.name);
+    let body = if body.contains('\n') {
+        format!(
+            "{}\u{4}\u{c2}",
+            body.replace('\\', "\\\\").replace('\n', "\\n")
+        )
+    } else {
+        body.to_owned()
+    };
     let record = if name.contains(' ') {
         format!("\"{name}\" {body}\r\n")
     } else {
