@@ -85,16 +85,54 @@ fn execute(arguments: &Arguments, json: bool) -> Result<(), Error> {
     let args = &arguments.positional;
     match args.first().and_then(|arg| arg.to_str()) {
         Some("get") if args.len() == 2 && arguments.source.is_none() => get(args, json),
+        Some("remove") if args.len() == 2 && arguments.source.is_none() => remove(args, json),
         Some("list") if args.len() <= 2 && arguments.source.is_none() => list(args, json),
         Some("set") if args.len() == if arguments.source.is_some() { 2 } else { 3 } => {
             set(args, arguments.source.as_ref(), json)
         }
         _ => Err(Error::new(
             "invalid_argument",
-            "Usage: dion [--json] get <path> | list [directory] | set <path> (<comment> | --stdin | --comment-file <file>)",
+            "Usage: dion [--json] get <path> | remove <path> | list [directory] | set <path> (<comment> | --stdin | --comment-file <file>)",
             2,
         )),
     }
+}
+
+fn remove(args: &[OsString], json: bool) -> Result<(), Error> {
+    let path = entry_path(&args[1])?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| Error::new("invalid_argument", "Path must have a UTF-8 entry name", 2))?;
+    let file = path
+        .parent()
+        .ok_or_else(|| Error::new("invalid_argument", "Path has no parent", 2))?
+        .join("descript.ion");
+    let original = storage::read(&file)?;
+    let changed = match &original {
+        Some(original) => {
+            match comment::remove(original, name).map_err(|error| error.at_file(&file))? {
+                comment::Removal::Unchanged => false,
+                comment::Removal::Update(bytes) => {
+                    storage::commit(&file, Some(original), &bytes)?;
+                    true
+                }
+                comment::Removal::DeleteFile => {
+                    storage::remove(&file, original)?;
+                    true
+                }
+            }
+        }
+        None => false,
+    };
+    if json {
+        write_json(
+            &mut io::stdout().lock(),
+            &serde_json::json!({"changed": changed}),
+        )
+        .map_err(|error| Error::new("io_error", error.to_string(), 1))?;
+    }
+    Ok(())
 }
 
 fn set(args: &[OsString], source: Option<&CommentSource>, json: bool) -> Result<(), Error> {

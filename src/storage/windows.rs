@@ -1,6 +1,6 @@
 use crate::error::Error;
 use std::{
-    fs::{self, OpenOptions},
+    fs::{self, File, OpenOptions},
     io::{self, Read, Write},
     os::windows::{
         ffi::OsStrExt,
@@ -34,37 +34,10 @@ pub fn commit(file: &Path, original: Option<&[u8]>, bytes: &[u8]) -> Result<(), 
     let parent = fs::canonicalize(parent).map_err(|error| Error::io(error, file))?;
     let destination = parent.join("descript.ion");
     // Deny writes while preparing the replacement, but allow ReplaceFileW to delete/rename.
-    let mut source = match original {
-        Some(_) => Some(
-            OpenOptions::new()
-                .read(true)
-                .share_mode(1 | 4)
-                .open(&destination)
-                .map_err(|error| Error::io(error, file))?,
-        ),
-        None => None,
-    };
-    let attributes = if let Some(source) = &mut source {
-        let metadata = source.metadata().map_err(|error| Error::io(error, file))?;
-        if metadata.permissions().readonly() {
-            return Err(Error::new("io_error", "Description file is read-only", 1).at_file(file));
-        }
-        let mut current = Vec::new();
-        source
-            .read_to_end(&mut current)
-            .map_err(|error| Error::io(error, file))?;
-        if Some(current.as_slice()) != original {
-            return Err(Error::new(
-                "content_changed",
-                "Description file content changed before commit",
-                1,
-            )
-            .at_file(file));
-        }
-        metadata.file_attributes()
-    } else {
-        2 // FILE_ATTRIBUTE_HIDDEN
-    };
+    let source = original
+        .map(|bytes| checked_source(&destination, file, bytes))
+        .transpose()?;
+    let attributes = source.as_ref().map_or(2, |(_, attributes)| *attributes);
     let temporary = tempfile::Builder::new()
         .prefix(".dion-")
         .suffix(".tmp")
@@ -131,4 +104,45 @@ pub fn commit(file: &Path, original: Option<&[u8]>, bytes: &[u8]) -> Result<(), 
     result.map_err(|error| Error::new("io_error", format!(
         "Commit failed: {error}. Inspect description file {} and temporary file {} for recovery; replacement may be partially complete",
         parent.join("descript.ion").display(), recovery.display()), 1).at_file(file))
+}
+
+/// Deletes the last-record file after read-only and content checks, without retry.
+/// The handle denies writes; the path check/delete race remains outside single-writer guarantees.
+pub fn remove(file: &Path, original: &[u8]) -> Result<(), Error> {
+    let destination = fs::canonicalize(file).map_err(|error| Error::io(error, file))?;
+    let _source = checked_source(&destination, file, original)?;
+    if super::read(&destination)?.as_deref() != Some(original) {
+        return Err(Error::new(
+            "content_changed",
+            "Description file content changed before deletion",
+            1,
+        )
+        .at_file(file));
+    }
+    fs::remove_file(&destination).map_err(|error| Error::io(error, file))
+}
+
+fn checked_source(destination: &Path, file: &Path, original: &[u8]) -> Result<(File, u32), Error> {
+    let mut source = OpenOptions::new()
+        .read(true)
+        .share_mode(1 | 4)
+        .open(destination)
+        .map_err(|error| Error::io(error, file))?;
+    let metadata = source.metadata().map_err(|error| Error::io(error, file))?;
+    if metadata.permissions().readonly() {
+        return Err(Error::new("io_error", "Description file is read-only", 1).at_file(file));
+    }
+    let mut current = Vec::new();
+    source
+        .read_to_end(&mut current)
+        .map_err(|error| Error::io(error, file))?;
+    if current != original {
+        return Err(Error::new(
+            "content_changed",
+            "Description file content changed before commit",
+            1,
+        )
+        .at_file(file));
+    }
+    Ok((source, metadata.file_attributes()))
 }

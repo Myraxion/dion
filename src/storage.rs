@@ -5,7 +5,12 @@ use std::{fs, io, path::Path};
 mod windows;
 
 #[cfg(windows)]
-pub use windows::commit;
+pub use windows::{commit, remove};
+
+#[cfg(not(windows))]
+pub fn remove(file: &Path, _original: &[u8]) -> Result<(), Error> {
+    Err(Error::new("io_error", "Deleting comments requires Windows", 1).at_file(file))
+}
 
 #[cfg(not(windows))]
 pub fn commit(file: &Path, _original: Option<&[u8]>, _bytes: &[u8]) -> Result<(), Error> {

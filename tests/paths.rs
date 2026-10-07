@@ -4,7 +4,7 @@ use std::{
     process::{Command, Output},
 };
 
-// Shared entry-path cases for get/set and, when implemented, remove.
+// Shared entry-path cases for get/set/remove.
 const DIRECTORY_PATHS: [&str; 4] = ["folder", "folder/", "folder/.", "./folder"];
 
 fn run(directory: &Path, args: &[&str]) -> Output {
@@ -13,6 +13,35 @@ fn run(directory: &Path, args: &[&str]) -> Output {
         .args(args)
         .output()
         .unwrap()
+}
+
+#[test]
+fn remove_locates_directory_comments_in_the_parent_for_all_path_spellings() {
+    let directory = tempfile::tempdir().unwrap();
+    let folder = directory.path().join("folder");
+    fs::create_dir(&folder).unwrap();
+    let parent_file = directory.path().join("descript.ion");
+    let inner_file = folder.join("descript.ion");
+    let inner_bytes = b"\xef\xbb\xbffolder inner comment";
+    fs::write(&inner_file, inner_bytes).unwrap();
+    let absolute = folder.to_str().unwrap();
+    for (cwd, path) in DIRECTORY_PATHS
+        .iter()
+        .map(|path| (directory.path(), *path))
+        .chain([
+            (directory.path(), absolute),
+            (folder.as_path(), "."),
+            (folder.as_path(), "../folder"),
+        ])
+    {
+        fs::write(&parent_file, b"\xef\xbb\xbffolder body\nother body\n").unwrap();
+        let result = run(cwd, &["remove", path]);
+        assert_eq!(result.status.code(), Some(0), "{path}: {:?}", result.stderr);
+        assert!(result.stdout.is_empty());
+        assert!(result.stderr.is_empty());
+        assert_eq!(fs::read(&parent_file).unwrap(), b"\xef\xbb\xbfother body\n");
+        assert_eq!(fs::read(&inner_file).unwrap(), inner_bytes);
+    }
 }
 
 #[test]

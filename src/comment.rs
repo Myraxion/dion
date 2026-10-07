@@ -170,6 +170,30 @@ pub fn set(original: Option<&[u8]>, name: &str, body: &str) -> Result<Option<Vec
     Ok(Some(updated))
 }
 
+pub enum Removal {
+    Unchanged,
+    Update(Vec<u8>),
+    DeleteFile,
+}
+
+pub fn remove(bytes: &[u8], name: &str) -> Result<Removal, Error> {
+    let records = parse(bytes)?;
+    let key = name.to_lowercase();
+    let Some(target) = records
+        .iter()
+        .find(|record| record.name.to_lowercase() == key)
+    else {
+        return Ok(Removal::Unchanged);
+    };
+    if records.len() == 1 {
+        return Ok(Removal::DeleteFile);
+    }
+    let mut updated = Vec::with_capacity(bytes.len() - target.range.len());
+    updated.extend_from_slice(&bytes[..target.range.start]);
+    updated.extend_from_slice(&bytes[target.range.end..]);
+    Ok(Removal::Update(updated))
+}
+
 fn decode_tc(body: &str) -> String {
     let mut decoded = String::with_capacity(body.len());
     let mut chars = body.chars().peekable();
