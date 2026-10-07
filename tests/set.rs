@@ -314,19 +314,28 @@ fn replacement_sharing_failure_retains_complete_temporary_file_and_reports_paths
     let bytes = "\u{feff}\"照片 😀.txt\" old\n".as_bytes();
     let directory = fixture(Some(bytes));
     let file = directory.path().join("descript.ion");
+    let links = tempfile::tempdir().unwrap();
+    let alias = links.path().join("linked");
+    let result = Command::new("cmd.exe")
+        .args(["/C", "mklink", "/J"])
+        .arg(&alias)
+        .arg(directory.path())
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
     // Allows reads but denies deletion, so validation succeeds and replacement fails.
     let _locked = fs::OpenOptions::new()
         .read(true)
         .share_mode(1)
         .open(&file)
         .unwrap();
-    let error = rejected(
-        &set(directory.path(), "照片 😀.txt", "new", true),
-        1,
-        "io_error",
-    );
+    let error = rejected(&set(&alias, "照片 😀.txt", "new", true), 1, "io_error");
     assert_eq!(fs::read(&file).unwrap(), bytes);
-    let recovery = fs::read_dir(directory.path())
+    let recovery = fs::read_dir(&alias)
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .find(|path| path.extension().is_some_and(|extension| extension == "tmp"))
@@ -336,7 +345,14 @@ fn replacement_sharing_failure_retains_complete_temporary_file_and_reports_paths
         "\u{feff}\"照片 😀.txt\" new\r\n".as_bytes()
     );
     let message = error["error"]["message"].as_str().unwrap();
-    assert!(message.contains(recovery.to_str().unwrap()));
+    // Commit reports canonical paths; a junction or Windows short name can spell
+    // the same directory differently from the path returned by read_dir.
+    let recovery = fs::canonicalize(recovery).unwrap();
+    assert!(
+        message.contains(recovery.to_str().unwrap()),
+        "reported: {message}; discovered: {}",
+        recovery.display()
+    );
     assert!(message.contains("descript.ion"));
 }
 
