@@ -88,7 +88,7 @@ fn get(args: &[OsString], json: bool) -> Result<(), Error> {
         write_json(
             &mut output,
             &serde_json::json!({
-                "name": record.name, "comment": record.comment, "extension": "none"
+                "name": record.name, "comment": record.comment, "extension": record.extension
             }),
         )
     } else {

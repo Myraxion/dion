@@ -309,12 +309,150 @@ fn a_sharing_violation_is_an_io_error() {
 }
 
 #[test]
-fn program_extensions_are_explicitly_deferred_instead_of_reported_as_none() {
+fn reads_tc_multiline_comments_in_text_and_json() {
     let directory = fixture(b"\xef\xbb\xbftarget first\\nsecond\x04\xc3\x82");
+    let result = get(directory.path(), &["get", "target"]);
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(result.stdout, b"first\nsecond");
+    assert!(result.stderr.is_empty());
     let result = get(directory.path(), &["get", "target", "--json"]);
-    assert_eq!(result.status.code(), Some(1));
-    assert!(result.stdout.is_empty());
-    let error: serde_json::Value = serde_json::from_slice(&result.stderr).unwrap();
-    assert_eq!(error["error"]["code"], "unsupported_extension");
-    assert_eq!(error["error"]["line"], 1);
+    assert_eq!(result.status.code(), Some(0));
+    assert!(result.stderr.is_empty());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap(),
+        serde_json::json!({"name": "target", "comment": "first\nsecond", "extension": "tc"})
+    );
+}
+
+#[test]
+fn tc_decoding_preserves_unicode_whitespace_blank_lines_and_literal_backslashes() {
+    let cases = [
+        (r"\n\n  中文😀\n\n\t  \n\n", "\n\n  中文😀\n\n\\t  \n\n"),
+        (
+            r"C:\\new\\file \\n \\\\ end\",
+            "C:\\new\\file \\n \\\\ end\\",
+        ),
+        (r"\q\中\N\", r"\q\中\N\"),
+        (r"\\\n", "\\\n"),
+        ("\t  中文 😀  ", "\t  中文 😀  "),
+        ("", ""),
+    ];
+    for (encoded, expected) in cases {
+        let bytes = format!("\u{feff}target {encoded}\u{4}\u{c2}\r\n").into_bytes();
+        let directory = fixture(&bytes);
+        let result = get(directory.path(), &["get", "target"]);
+        assert_eq!(result.status.code(), Some(0), "{encoded:?}");
+        assert_eq!(result.stdout, expected.as_bytes(), "{encoded:?}");
+        assert!(result.stderr.is_empty());
+        let result = get(directory.path(), &["get", "target", "--json"]);
+        assert_eq!(result.status.code(), Some(0));
+        assert!(result.stderr.is_empty());
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap(),
+            serde_json::json!({"name": "target", "comment": expected, "extension": "tc"})
+        );
+        assert_eq!(
+            fs::read(directory.path().join("descript.ion")).unwrap(),
+            bytes
+        );
+    }
+}
+
+#[test]
+fn only_the_exact_tc_extension_enables_escape_decoding() {
+    let body = r"  中文😀\n\\\q end\";
+    for (suffix, extension) in [
+        ("", "none"),
+        ("\u{4}other", "unknown"),
+        ("\u{4}", "unknown"),
+        ("\u{4}\u{c2}extra", "unknown"),
+        ("\u{4}other\u{4}\u{c2}", "unknown"),
+    ] {
+        let bytes = format!("\u{feff}target {body}{suffix}\r\n").into_bytes();
+        let directory = fixture(&bytes);
+        let result = get(directory.path(), &["get", "target"]);
+        assert_eq!(result.status.code(), Some(0), "{suffix:?}");
+        assert_eq!(result.stdout, body.as_bytes());
+        assert!(result.stderr.is_empty());
+        let result = get(directory.path(), &["get", "target", "--json"]);
+        assert_eq!(result.status.code(), Some(0));
+        assert!(result.stderr.is_empty());
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap(),
+            serde_json::json!({"name": "target", "comment": body, "extension": extension})
+        );
+        assert_eq!(
+            fs::read(directory.path().join("descript.ion")).unwrap(),
+            bytes
+        );
+    }
+}
+
+#[test]
+fn mixed_extensions_still_require_whole_file_validation() {
+    let valid = "\u{feff}\r\ntarget first\\nsecond\u{4}\u{c2}\r\nplain literal\\n\nother normal\\n\u{4}foreign\r";
+    let directory = fixture(valid.as_bytes());
+    for (name, comment, extension) in [
+        ("target", "first\nsecond", "tc"),
+        ("plain", r"literal\n", "none"),
+        ("other", r"normal\n", "unknown"),
+    ] {
+        let result = get(directory.path(), &["get", name, "--json"]);
+        assert_eq!(result.status.code(), Some(0));
+        assert!(result.stderr.is_empty());
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap(),
+            serde_json::json!({"name": name, "comment": comment, "extension": extension})
+        );
+    }
+    for (bad_record, code) in [
+        (b"bad body\x04\xff".to_vec(), "invalid_encoding"),
+        (b"\"unclosed body\x04unknown".to_vec(), "invalid_format"),
+        (b"TARGET duplicate\x04unknown".to_vec(), "invalid_format"),
+        (
+            format!("long {}\u{4}unknown\r\n", "x".repeat(4096)).into_bytes(),
+            "invalid_format",
+        ),
+    ] {
+        let mut bytes = valid.as_bytes().to_vec();
+        bytes.extend(bad_record);
+        fs::write(directory.path().join("descript.ion"), &bytes).unwrap();
+        let result = get(directory.path(), &["get", "target", "--json"]);
+        assert_eq!(result.status.code(), Some(1));
+        assert!(result.stdout.is_empty());
+        let error: serde_json::Value = serde_json::from_slice(&result.stderr).unwrap();
+        assert_eq!(error["error"]["code"], code);
+        assert_eq!(error["error"]["file"], "descript.ion");
+        assert_eq!(error["error"]["line"], 5);
+        assert_eq!(
+            fs::read(directory.path().join("descript.ion")).unwrap(),
+            bytes
+        );
+    }
+}
+
+#[test]
+fn physical_length_limit_includes_tc_and_unknown_extension_bytes() {
+    for extension in ["\u{4}\u{c2}", "\u{4}foreign"] {
+        // Name + space: 7 bytes. Count the extension and CRLF in the physical limit.
+        let body = "x".repeat(4096 - 7 - extension.len() - 2);
+        let mut bytes = format!("\u{feff}target {body}{extension}\r\n").into_bytes();
+        let directory = fixture(&bytes);
+        let result = get(directory.path(), &["get", "target"]);
+        assert_eq!(result.status.code(), Some(0));
+        assert_eq!(result.stdout, body.as_bytes());
+        assert!(result.stderr.is_empty());
+        bytes.insert(10, b'x');
+        fs::write(directory.path().join("descript.ion"), &bytes).unwrap();
+        let result = get(directory.path(), &["get", "target", "--json"]);
+        assert_eq!(result.status.code(), Some(1));
+        assert!(result.stdout.is_empty());
+        let error: serde_json::Value = serde_json::from_slice(&result.stderr).unwrap();
+        assert_eq!(error["error"]["code"], "invalid_format");
+        assert_eq!(error["error"]["line"], 1);
+        assert_eq!(
+            fs::read(directory.path().join("descript.ion")).unwrap(),
+            bytes
+        );
+    }
 }

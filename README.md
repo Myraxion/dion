@@ -2,7 +2,7 @@
 
 Dion 是一款轻量、高性能、零外部运行依赖的 Windows 原生命令行工具，主用于以 Total Commander 的 **UTF-8 Unicode 编码** 标准查看、设置、编辑与维护 `descript.ion` 文件备注。
 
-第一版实施规格见 [GitHub Issue #1](https://github.com/Myraxion/dion/issues/1)。当前已实现 [Issue #2](https://github.com/Myraxion/dion/issues/2) 的单行备注查询；完整规格包括后续切片，见 [实施规格](docs/spec.md)、[设计规则](docs/design.md) 和 [领域词汇表](GLOSSARY.md)。
+第一版实施规格见 [GitHub Issue #1](https://github.com/Myraxion/dion/issues/1)。当前已实现 [Issue #2](https://github.com/Myraxion/dion/issues/2) 的单行备注查询及 [Issue #3](https://github.com/Myraxion/dion/issues/3) 的 TC 多行与程序扩展读取；完整规格包括后续切片，见 [实施规格](docs/spec.md)、[设计规则](docs/design.md) 和 [领域词汇表](GLOSSARY.md)。
 
 开发任务与直接依赖见 [任务索引](docs/tickets.md)，首个任务为 [Issue #2](https://github.com/Myraxion/dion/issues/2)。
 
@@ -20,7 +20,7 @@ cargo build --release --locked
 
 `get` 从输入路径的父目录读取 `descript.ion`，目标文件或文件夹可以不存在。备注文件须为带 BOM 的 UTF-8；接受 CRLF、LF、CR 以及末条无终止换行。含空格的记录名称用双引号包围，名称后第一个空格是分隔符，其后的正文首尾空白原样保留。名称匹配与重复检测使用 Unicode 小写转换，不依赖目录的大小写设置。
 
-文本模式只输出正文，不追加换行。`--json` 可放在命令之前或路径之后，成功输出包含 `name`、`comment`、`extension:"none"`，保留记录原名称拼写；JSON 为无 BOM 的 UTF-8，以 LF 结束。以 `-` 开头的路径放在 `--` 后，例如 `dion get -- --json`。
+文本模式只输出正文，不追加换行。`--json` 可放在命令之前或路径之后，成功输出包含 `name`、`comment`、`extension`（`none`、`tc` 或 `unknown`），保留记录原名称拼写；JSON 为无 BOM 的 UTF-8，以 LF 结束。以 `-` 开头的路径放在 `--` 后，例如 `dion get -- --json`。
 
 错误写入 stderr，正常结果写入 stdout。指定 `--json` 时错误为 `{"error":{"code":"…","message":"…","file":"…","line":1}}`；`file`、物理行号 `line` 仅在适用时提供。完整文件校验通过后才输出结果。
 
@@ -31,7 +31,7 @@ cargo build --release --locked
 | 2 | 参数错误 | `invalid_argument` |
 | 3 | 缺失备注记录或备注文件 | `not_found` |
 
-本切片只支持无程序扩展的单行记录；遇到程序扩展会返回退出码 1、`unsupported_extension`，多行与扩展读取由 #3 交付。`list`、`set`、`remove` 尚未实现。
+带 TC UTF-8 扩展标记 `04 C3 82` 的记录将 `\n` 解码为逻辑 LF、`\\` 解码为反斜杠，保留缩进、首尾空白、连续空行和尾部换行数量。无标记记录的反斜杠按字面读取；未知程序扩展只读取控制字符 `04` 前的普通正文，不解释转义。未知反斜杠组合及末尾反斜杠按字面保留，这是 Dion 的产品规则，尚未完整核验 TC 对非标准转义的行为。`list`、`set`、`remove` 尚未实现。
 
 ## 开发验证
 

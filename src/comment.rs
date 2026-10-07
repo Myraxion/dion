@@ -1,9 +1,18 @@
 use crate::error::Error;
-use std::collections::HashSet;
+use std::{borrow::Cow, collections::HashSet};
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Extension {
+    None,
+    Tc,
+    Unknown,
+}
 
 pub struct Record<'a> {
     pub name: &'a str,
-    pub comment: &'a str,
+    pub comment: Cow<'a, str>,
+    pub extension: Extension,
 }
 
 pub fn parse(bytes: &[u8]) -> Result<Vec<Record<'_>>, Error> {
@@ -76,16 +85,42 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Record<'_>>, Error> {
                 line_number,
             ));
         }
-        if comment.contains('\u{4}') {
-            return Err(at_line(
-                "unsupported_extension",
-                "Program extensions are not supported in this version",
-                line_number,
-            ));
-        }
-        records.push(Record { name, comment });
+        let (comment, extension) = match comment.split_once('\u{4}') {
+            Some((body, "\u{c2}")) => (Cow::Owned(decode_tc(body)), Extension::Tc),
+            Some((body, _)) => (Cow::Borrowed(body), Extension::Unknown),
+            None => (Cow::Borrowed(comment), Extension::None),
+        };
+        records.push(Record {
+            name,
+            comment,
+            extension,
+        });
     }
     Ok(records)
+}
+
+fn decode_tc(body: &str) -> String {
+    let mut decoded = String::with_capacity(body.len());
+    let mut chars = body.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            match chars.peek() {
+                Some('n') => {
+                    chars.next();
+                    decoded.push('\n');
+                    continue;
+                }
+                Some('\\') => {
+                    chars.next();
+                    decoded.push('\\');
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        decoded.push(ch);
+    }
+    decoded
 }
 
 fn at_line(code: &'static str, message: &str, line: usize) -> Error {
