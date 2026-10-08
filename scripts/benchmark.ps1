@@ -1,109 +1,62 @@
 param(
     [string]$ExePath = "$PSScriptRoot\..\target\release\dion.exe",
+    [ValidateRange(1, 10000)]
     [int]$Iterations = 5,
-    [string]$OutputDir = "$PSScriptRoot\..\docs"
+    [string]$OutputDir = "$PSScriptRoot\..\docs",
+    [string]$StorageDescription = '未人工核验；见下方临时数据目录'
 )
 
 $ErrorActionPreference = 'Stop'
 
 Add-Type -TypeDefinition @"
 using System;
-using System.Diagnostics;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 
-public class BenchmarkMetrics : IDisposable {
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    static extern IntPtr CreateJobObject(IntPtr lpJobAttributes, string lpName);
-
+public static class BenchmarkMetrics {
     [DllImport("kernel32.dll", SetLastError = true)]
-    static extern bool AssignProcessToJobObject(IntPtr hJob, IntPtr hProcess);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    static extern bool QueryInformationJobObject(IntPtr hJob, int JobInformationClass, IntPtr lpJobInformation, uint cbJobInformationLength, out uint lpReturnLength);
+    static extern bool K32GetProcessMemoryInfo(IntPtr process, out PROCESS_MEMORY_COUNTERS counters, uint size);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool GetProcessTimes(IntPtr hProcess, out long lpCreationTime, out long lpExitTime, out long lpKernelTime, out long lpUserTime);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    static extern bool CloseHandle(IntPtr hObject);
-
     [StructLayout(LayoutKind.Sequential)]
-    struct IO_COUNTERS {
-        public ulong ReadOperationCount;
-        public ulong WriteOperationCount;
-        public ulong OtherOperationCount;
-        public ulong ReadTransferCount;
-        public ulong WriteTransferCount;
-        public ulong OtherTransferCount;
+    struct PROCESS_MEMORY_COUNTERS {
+        public uint cb;
+        public uint PageFaultCount;
+        public UIntPtr PeakWorkingSetSize;
+        public UIntPtr WorkingSetSize;
+        public UIntPtr QuotaPeakPagedPoolUsage;
+        public UIntPtr QuotaPagedPoolUsage;
+        public UIntPtr QuotaPeakNonPagedPoolUsage;
+        public UIntPtr QuotaNonPagedPoolUsage;
+        public UIntPtr PagefileUsage;
+        public UIntPtr PeakPagefileUsage;
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
-        public long PerProcessUserTimeLimit;
-        public long PerJobUserTimeLimit;
-        public uint LimitFlags;
-        public UIntPtr MinimumWorkingSetSize;
-        public UIntPtr MaximumWorkingSetSize;
-        public uint ActiveProcessLimit;
-        public UIntPtr Affinity;
-        public uint PriorityClass;
-        public uint SchedulingClass;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
-        JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation;
-        IO_COUNTERS IoInfo;
-        public UIntPtr ProcessMemoryLimit;
-        public UIntPtr JobMemoryLimit;
-        public UIntPtr PeakProcessMemoryUsed;
-        public UIntPtr PeakJobMemoryUsed;
-    }
-
-    IntPtr hJob;
-
-    public BenchmarkMetrics() {
-        hJob = CreateJobObject(IntPtr.Zero, null);
-    }
-
-    public void Track(Process p) {
-        AssignProcessToJobObject(hJob, p.Handle);
-    }
-
-    public ulong GetPeakMemory() {
-        int length = Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
-        IntPtr pInfo = Marshal.AllocHGlobal(length);
-        try {
-            uint returnLength;
-            if (QueryInformationJobObject(hJob, 9, pInfo, (uint)length, out returnLength)) {
-                var info = (JOBOBJECT_EXTENDED_LIMIT_INFORMATION)Marshal.PtrToStructure(pInfo, typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
-                return (ulong)info.PeakJobMemoryUsed;
-            }
-            return 0;
-        } finally {
-            Marshal.FreeHGlobal(pInfo);
+    // Query the kernel's lifetime peak through the retained handle after exit.
+    // PeakPagefileUsage is commit charge, not the resident working set.
+    public static ulong GetPeakMemory(IntPtr process) {
+        PROCESS_MEMORY_COUNTERS counters;
+        uint size = (uint)Marshal.SizeOf(typeof(PROCESS_MEMORY_COUNTERS));
+        if (!K32GetProcessMemoryInfo(process, out counters, size)) {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Peak memory query failed");
         }
+        ulong peak = counters.PeakPagefileUsage.ToUInt64();
+        if (peak == 0) throw new InvalidOperationException("Peak memory measurement is zero");
+        return peak;
     }
 
-    public void GetTimes(Process p, out double processLifetimeMs, out double cpuTimeMs) {
+    public static void GetTimes(IntPtr process, out double processLifetimeMs, out double cpuTimeMs) {
         long creationTime, exitTime, kernelTime, userTime;
-        if (GetProcessTimes(p.Handle, out creationTime, out exitTime, out kernelTime, out userTime)) {
-            processLifetimeMs = (exitTime - creationTime) / 10000.0;
-            cpuTimeMs = (kernelTime + userTime) / 10000.0;
-        } else {
-            processLifetimeMs = 0;
-            cpuTimeMs = 0;
+        if (!GetProcessTimes(process, out creationTime, out exitTime, out kernelTime, out userTime)) {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Process time query failed");
         }
-    }
-
-    public void Dispose() {
-        if (hJob != IntPtr.Zero) {
-            CloseHandle(hJob);
-            hJob = IntPtr.Zero;
-        }
+        processLifetimeMs = (exitTime - creationTime) / 10000.0;
+        cpuTimeMs = (kernelTime + userTime) / 10000.0;
     }
 }
-"@ -ErrorAction SilentlyContinue
+"@
 
 $ResolvedExe = (Resolve-Path $ExePath).Path
 if (-not (Test-Path $ResolvedExe)) {
@@ -139,7 +92,7 @@ function Invoke-MeasuredRun {
         [string]$WorkingDir
     )
 
-    $metrics = [BenchmarkMetrics]::new()
+    $p = $null
     try {
         $psi = [System.Diagnostics.ProcessStartInfo]::new()
         $psi.FileName = $Exe
@@ -154,7 +107,7 @@ function Invoke-MeasuredRun {
 
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
         $p = [System.Diagnostics.Process]::Start($psi)
-        $metrics.Track($p)
+        $handle = $p.Handle
         $outTask = $p.StandardOutput.ReadToEndAsync()
         $errTask = $p.StandardError.ReadToEndAsync()
         $p.WaitForExit()
@@ -162,9 +115,9 @@ function Invoke-MeasuredRun {
 
         $out = $outTask.Result
         $err = $errTask.Result
-        $peakMem = $metrics.GetPeakMemory()
+        $peakMem = [BenchmarkMetrics]::GetPeakMemory($handle)
         [double]$procLife = 0; [double]$cpuTime = 0
-        $metrics.GetTimes($p, [ref]$procLife, [ref]$cpuTime)
+        [BenchmarkMetrics]::GetTimes($handle, [ref]$procLife, [ref]$cpuTime)
 
         if ($p.ExitCode -ne 0) {
             throw "命令执行失败 (ExitCode $($p.ExitCode)): $err"
@@ -177,12 +130,20 @@ function Invoke-MeasuredRun {
             PeakMemBytes      = $peakMem
         }
     } finally {
-        $metrics.Dispose()
+        if ($null -ne $p) { $p.Dispose() }
     }
 }
 
+function Get-SizeVerdict([long]$Bytes) {
+    if ($Bytes -le 5MB) { '达成' } else { '未达成' }
+}
+
+function Format-MeasurementRange($Rows, [string]$Property) {
+    $range = $Rows | Measure-Object -Property $Property -Minimum -Maximum
+    '{0:F2}–{1:F2}' -f $range.Minimum, $range.Maximum
+}
+
 $benchRoot = Join-Path ([System.IO.Path]::GetTempPath()) "dion_benchmarks_$(Get-Random)"
-if (Test-Path $benchRoot) { Remove-Item -Recurse -Force $benchRoot }
 New-Item -ItemType Directory -Path $benchRoot | Out-Null
 
 try {
@@ -254,6 +215,8 @@ try {
     Write-Host "正在生成 10,000 条记录数据集..." -ForegroundColor Yellow
     $dir10k = Join-Path $benchRoot "dataset_10000"
     Generate-Dataset -TargetDir $dir10k -Count 10000
+    $size100 = (Get-Item (Join-Path $dir100 'descript.ion')).Length
+    $size10k = (Get-Item (Join-Path $dir10k 'descript.ion')).Length
 
     $testScenarios = @(
         # 最简空目录冷启动
@@ -338,7 +301,10 @@ try {
             }
 
             $sortedWall = $wallTimes | Sort-Object
-            $medWall = $sortedWall[[math]::Floor($wallTimes.Count / 2)]
+            $middle = [math]::Floor($wallTimes.Count / 2)
+            $medWall = if ($wallTimes.Count % 2) { $sortedWall[$middle] } else {
+                ($sortedWall[$middle - 1] + $sortedWall[$middle]) / 2
+            }
             $avgWall = ($wallTimes | Measure-Object -Average).Average
             $avgCpu = ($cpuTimes | Measure-Object -Average).Average
             $avgProc = ($procTimes | Measure-Object -Average).Average
@@ -361,16 +327,20 @@ try {
     Write-Host "`n=== 测量结果汇总 ===" -ForegroundColor Cyan
     $results | Format-Table Scenario, WallClockMean, WallClockMed, CpuTimeMean, ProcLifeMean, PeakMemMB -AutoSize
 
-    $dateStr = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $dateStr = [TimeZoneInfo]::ConvertTimeBySystemTimeZoneId([DateTime]::UtcNow, 'China Standard Time').ToString('yyyy-MM-dd HH:mm:ss')
+    $sizeVerdict = Get-SizeVerdict $ExeSizeBytes
+    $warm100 = $results | Where-Object { $_.Target -eq '100' -and $_.Scenario -like '*warm*' }
+    $warm10k = $results | Where-Object { $_.Target -eq '10000' -and $_.Scenario -like '*warm*' }
     $md = @"
 # Dion 本地性能基线报告 (Issue #11)
 
-- 测量日期: $dateStr
+- 测量日期: $dateStr (Asia/Shanghai)
 - 可执行文件: ``$($ExeFileInfo.Name)`` (Release 构建, ``cargo build --release --locked``)
 - 产物体积: **$ExeSizeBytes 字节** ($ExeSizeKiB KiB, **$ExeSizeMiB MiB**)
   - 目标上限: 5.00 MiB
-  - 达成情况: 达成 (实际体积仅为 $ExeSizeMiB MiB，占目标上限约 $([math]::Round(($ExeSizeBytes / (5 * 1024 * 1024)) * 100, 1))%)
-- 外部依赖: **静态链接 MSVC CRT** (无额外运行时或 VC++ Redistributable 依赖)
+  - 达成情况: $sizeVerdict (占目标上限约 $([math]::Round(($ExeSizeBytes / (5 * 1024 * 1024)) * 100, 1))%)
+- 复现: 在 PowerShell 7 执行 ``cargo build --release --locked``，然后执行 ``./scripts/benchmark.ps1``；可用 ``-StorageDescription`` 记录人工核验的存储环境。
+- 构建配置: 默认 Release 产物由仓库配置静态链接 MSVC CRT；脚本不检查自定义 ``-ExePath`` 的构建模式或依赖。
 
 ## 测量机器环境与测试条件
 
@@ -379,27 +349,31 @@ try {
 | 操作系统 | $($machineInfo.OSCaption) (版本 $($machineInfo.OSVersion), $($machineInfo.OSArch)) |
 | 处理器 (CPU) | $($machineInfo.CPU) ($($machineInfo.Cores) 核心 / $($machineInfo.LogicalCPUs) 逻辑处理器) |
 | 物理内存 (RAM) | $($machineInfo.TotalRAM_GB) GB |
-| 文件系统 | 本地 Windows 文件系统 (NTFS, 本地 NVMe SSD) |
+| 文件系统 / 存储 | $StorageDescription |
+| 临时数据目录 | ``$benchRoot`` (运行结束后清理) |
 | 测量范围 | 本地文件系统 (不包含网络共享/UNC/SMB) |
 | 输出流处理 | 标准输出与标准错误重定向至后台管道并完全读取丢弃，不输出至终端，排除控制台渲染与字符滚动开销 |
-| 峰值内存测量 | Windows Job Object (``JOBOBJECT_EXTENDED_LIMIT_INFORMATION.PeakJobMemoryUsed``) 测量进程生命周期真实峰值提交/工作集 |
+| 峰值内存测量 | 保留进程句柄，退出后用 ``K32GetProcessMemoryInfo`` 读取 ``PROCESS_MEMORY_COUNTERS.PeakPagefileUsage``；生命周期峰值提交量，非工作集；查询失败或零值中止测量 |
 | 时间测量维度 | 壁钟耗时 (Wall-Clock Time)、进程生命周期时间 (Process Lifetime via ``GetProcessTimes``) 与 CPU 占用时间 (CPU Time) |
 | 预热与迭代 | 温运行场景执行 1 次预热，后续执行 $Iterations 轮独立测量取统计值；修改类操作每次运行前严格恢复基准数据集 |
+| cold 场景口径 | 每个场景不额外预热的首次调用；不清空系统文件缓存，不代表磁盘或系统缓存冷启动 |
+
+峰值提交量定义见 [Microsoft PROCESS_MEMORY_COUNTERS](https://learn.microsoft.com/en-us/windows/win32/api/psapi/ns-psapi-process_memory_counters)。
 
 ## 工作负载特征
 
 - **100 条记录**:
-  - 文件大小约 6.5 KB。
-  - 混合普通单行、引号包围带空格名称、Unicode 字符与 Emoji（😀）以及 TC 多行转义扩展记录（含 ``\n``、``\\`` 及控制标记 ``04 C3 82``）。
+  - 备注文件大小 $size100 字节。
+  - 混合普通单行、引号包围的名称、含 Unicode 字符与 Emoji（😀）的正文以及 TC 多行转义扩展记录（含 ``\n``、``\\`` 及控制标记 ``04 C3 82``）。
 - **10,000 条记录**:
-  - 文件大小约 650 KB。
+  - 备注文件大小 $size10k 字节。
   - 同样混合普通单行、引号包围名称、Unicode 字符以及 TC 多行扩展转义记录。
 - **关联文件条目**:
   - 目录下创建有所有对应的实际文件条目，满足 ``set`` 命令目标条目必须存在的前提约束。
 
 ## 本地性能基线数据
 
-| 测量场景 | 迭代次数 | 平均壁钟耗时 (ms) | 中位数壁钟耗时 (ms) | 平均 CPU 耗时 (ms) | 平均进程生命周期 (ms) | 峰值内存 (MB) |
+| 测量场景 | 迭代次数 | 平均壁钟耗时 (ms) | 中位数壁钟耗时 (ms) | 平均 CPU 耗时 (ms) | 平均进程生命周期 (ms) | 峰值提交量 (MiB) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 "@
 
@@ -412,21 +386,12 @@ try {
 
 ## 结果分析与时延门槛说明
 
-1. **可执行文件体积与分发**:
-   - Release 可执行文件实际仅 **$ExeSizeBytes 字节** (~$ExeSizeKiB KiB / $ExeSizeMiB MiB)，远小于 5.00 MiB 目标上限。
-   - 静态链接 MSVC CRT，无额外运行时或安装包依赖，单 exe 复制即用。
-2. **冷启动与命令开销**:
-   - 包含进程创建、可执行文件加载、CRT 初始化、命令行解析和退出的完整进程壁钟耗时约在 180~210 ms 区间（受 Windows 环境进程创建调度与安全扫描影响）；其中进程内核态与用户态 CPU 耗时约 120~150 ms。
-   - 峰值常驻内存（Job Object 峰值提交）在空目录及 100 条记录下稳定在 9~11 MB 左右。
-3. **100 条记录日常负载**:
-   - ``get``、``list``、``set``、``remove`` 操作的平均壁钟耗时稳定在 180~210 ms 范围，CPU 时间在 125~150 ms 左右。
-   - 峰值内存约 10~11 MB。
-4. **10,000 条记录高负载场景**:
-   - 在 10,000 条记录（约 650 KB 文本）整表 Unicode 小写规范化与文件合法性校验下，``get`` 与 ``list`` 依然保持平稳响应；
-   - 触发同目录临时文件生成、权限与属性保留、Windows ``ReplaceFileW`` 替换提交的 ``set`` 与 ``remove`` 操作耗时保持在低时延区间；
-   - 峰值内存最高约 19.6 MB（万条记录整表 JSON 序列化与输出流），其余操作均在 12~13 MB 左右，内存使用紧凑无泄漏。
-5. **时延预算确立原则**:
-   - 本测量如实记录 Windows 本地文件系统环境下的客观基线数据，供后续版本确认时延预算，不提前将未经充分验证的新阈值暗中加入规格。
+- 本次 exe 体积为 $ExeSizeMiB MiB，5 MiB 目标：**$sizeVerdict**。
+- 100 条记录温运行：各场景平均壁钟耗时 $(Format-MeasurementRange $warm100 'WallClockMean') ms，平均 CPU 耗时 $(Format-MeasurementRange $warm100 'CpuTimeMean') ms，峰值提交量 $(Format-MeasurementRange $warm100 'PeakMemMB') MiB。
+- 10,000 条记录温运行：各场景平均壁钟耗时 $(Format-MeasurementRange $warm10k 'WallClockMean') ms，平均 CPU 耗时 $(Format-MeasurementRange $warm10k 'CpuTimeMean') ms，峰值提交量 $(Format-MeasurementRange $warm10k 'PeakMemMB') MiB。
+- 上述区间为本次场景统计值的最小值与最大值，不是单次运行范围或性能保证；峰值内存结果不能证明不存在内存泄漏。
+- 旧版报告使用 Job Object 峰值且混称工作集，本次统一为进程峰值提交量；不将两种口径的数值直接用于判断性能变化。
+- 保留本地基线供后续确认时延预算，本次不新增固定时延门槛。
 
 "@
 
@@ -436,6 +401,12 @@ try {
 
 } finally {
     if (Test-Path $benchRoot) {
-        Remove-Item -Recurse -Force $benchRoot -ErrorAction SilentlyContinue
+        $cleanupPath = [IO.Path]::GetFullPath($benchRoot)
+        $tempDirectory = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+        if (-not $cleanupPath.StartsWith($tempDirectory, [StringComparison]::OrdinalIgnoreCase) -or
+            -not [IO.Path]::GetFileName($cleanupPath).StartsWith('dion_benchmarks_')) {
+            throw "Unexpected benchmark cleanup path: $cleanupPath"
+        }
+        Remove-Item -LiteralPath $cleanupPath -Recurse -Force
     }
 }
