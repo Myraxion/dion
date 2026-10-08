@@ -13,6 +13,86 @@ fn list(directory: &Path, args: &[&str]) -> Output {
 }
 
 #[test]
+fn recursive_list_emits_parent_records_then_naturally_ordered_subtrees_in_all_modes() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::create_dir_all(directory.path().join("dir2/middle/deep")).unwrap();
+    fs::create_dir(directory.path().join("dir10")).unwrap();
+    let fixtures = [
+        (
+            "descript.ion",
+            "\u{feff}z parent\r\nDIR2 directory\r\nempty ",
+        ),
+        (
+            "dir2/descript.ion",
+            "\u{feff}orphan first\\nsecond\u{4}\u{c2}",
+        ),
+        (
+            "dir2/middle/deep/descript.ion",
+            "\u{feff}lost literal\\n\u{4}foreign",
+        ),
+        ("dir10/descript.ion", "\u{feff}file last"),
+    ];
+    for (path, bytes) in fixtures {
+        fs::write(directory.path().join(path), bytes).unwrap();
+    }
+    let expected = serde_json::json!({"entries": [
+        {"name":"DIR2", "comment":"directory", "extension":"none"},
+        {"name":"empty", "comment":"", "extension":"none"},
+        {"name":"z", "comment":"parent", "extension":"none"},
+        {"name":"dir2\\orphan", "comment":"first\nsecond", "extension":"tc"},
+        {"name":"dir2\\middle\\deep\\lost", "comment":"literal\\n", "extension":"unknown"},
+        {"name":"dir10\\file", "comment":"last", "extension":"none"},
+    ]});
+    for option in ["--recursive", "-r"] {
+        for long in [false, true] {
+            let mut args = vec!["list", option, "--json"];
+            if long {
+                args.push("-l");
+            }
+            let result = list(directory.path(), &args);
+            assert_eq!(result.status.code(), Some(0), "{:?}", result.stderr);
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap(),
+                expected
+            );
+        }
+    }
+    let result = list(directory.path(), &["list", "-r"]);
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(
+        result.stdout,
+        concat!(
+            "DIR2\\                  directory\n",
+            "empty                  \n",
+            "z                      parent\n",
+            "dir2\\orphan            first\n",
+            "                       second\n",
+            "dir2\\middle\\deep\\lost  literal\\n\n",
+            "dir10\\file             last\n",
+        )
+        .as_bytes()
+    );
+    let result = list(directory.path(), &["list", "--recursive", "--long"]);
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(
+        result.stdout,
+        concat!(
+            "DIR2\\\n    directory\n\nempty\n    \n\nz\n    parent\n\n",
+            "dir2\\orphan\n    first\n    second\n\n",
+            "dir2\\middle\\deep\\lost\n    literal\\n\n\n",
+            "dir10\\file\n    last\n\n",
+        )
+        .as_bytes()
+    );
+    for (path, bytes) in fixtures {
+        assert_eq!(
+            fs::read(directory.path().join(path)).unwrap(),
+            bytes.as_bytes()
+        );
+    }
+}
+
+#[test]
 fn directories_precede_files_in_natural_order_including_orphans() {
     let directory = tempfile::tempdir().unwrap();
     fs::create_dir(directory.path().join("dir10")).unwrap();
@@ -39,6 +119,103 @@ fn directories_precede_files_in_natural_order_including_orphans() {
     let result = list(directory.path(), &["list", "-l"]);
     assert_eq!(result.status.code(), Some(0));
     assert_eq!(result.stdout, b"dir2\\\n    directory two\n\ndir10\\\n    directory ten\n\nfile02\n    zero two\n\nFile2\n    two\n\nfile10\n    ten\n\nmissing\n    orphan\n\n");
+}
+
+#[test]
+fn later_recursive_description_errors_leave_stdout_empty_in_every_mode() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::create_dir(directory.path().join("dir2")).unwrap();
+    fs::create_dir(directory.path().join("dir10")).unwrap();
+    fs::write(
+        directory.path().join("descript.ion"),
+        b"\xef\xbb\xbfparent ok",
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("dir2/descript.ion"),
+        b"\xef\xbb\xbfchild ok",
+    )
+    .unwrap();
+    let file = directory.path().join("dir10/descript.ion");
+    for (bytes, code, line) in [
+        (b"missing BOM".as_slice(), "invalid_encoding", None),
+        (
+            b"\xef\xbb\xbfok body\n\"unclosed".as_slice(),
+            "invalid_format",
+            Some(2),
+        ),
+    ] {
+        fs::write(&file, bytes).unwrap();
+        for options in [vec![], vec!["-l"], vec!["--json"], vec!["-l", "--json"]] {
+            let mut args = vec!["list", "-r"];
+            args.extend(options);
+            let result = list(directory.path(), &args);
+            assert_eq!(result.status.code(), Some(1));
+            assert!(result.stdout.is_empty());
+            if args.contains(&"--json") {
+                let error: serde_json::Value = serde_json::from_slice(&result.stderr).unwrap();
+                assert_eq!(error["error"]["code"], code);
+                assert_eq!(error["error"]["file"], ".\\dir10\\descript.ion");
+                assert_eq!(error["error"]["line"], serde_json::json!(line));
+            } else {
+                let text = String::from_utf8(result.stderr).unwrap();
+                assert!(text.contains(code));
+                assert!(text.contains("dir10\\descript.ion"));
+            }
+        }
+        assert_eq!(fs::read(&file).unwrap(), bytes);
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn a_later_inaccessible_directory_fails_even_without_a_description_file() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(
+        directory.path().join("descript.ion"),
+        b"\xef\xbb\xbfparent ok",
+    )
+    .unwrap();
+    let child = directory.path().join("child");
+    fs::create_dir(&child).unwrap();
+    // Deny directory enumeration, while leaving file reads and ACL restoration allowed.
+    let script = "$ErrorActionPreference='Stop'; $p=$env:DION_TEST_DIRECTORY; $acl=Get-Acl -LiteralPath $p; $rule=[Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.WindowsIdentity]::GetCurrent().User, 'ListDirectory', 'Deny'); $acl.AddAccessRule($rule); Set-Acl -LiteralPath $p -AclObject $acl";
+    let acl = Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .env_remove("PSModulePath")
+        .env("DION_TEST_DIRECTORY", &child)
+        .output()
+        .unwrap();
+    assert!(acl.status.success(), "{:?}", acl.stderr);
+    let results: Vec<_> = [
+        vec!["list", "-r"],
+        vec!["list", "-r", "-l"],
+        vec!["list", "-r", "--json"],
+    ]
+    .iter()
+    .map(|args| list(directory.path(), args))
+    .collect();
+    let restore = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &script.replace("AddAccessRule", "RemoveAccessRule"),
+        ])
+        .env_remove("PSModulePath")
+        .env("DION_TEST_DIRECTORY", &child)
+        .output()
+        .unwrap();
+    assert!(restore.status.success(), "{:?}", restore.stderr);
+    for result in results {
+        assert_eq!(result.status.code(), Some(1));
+        assert!(result.stdout.is_empty());
+        assert!(
+            String::from_utf8(result.stderr)
+                .unwrap()
+                .contains("io_error")
+        );
+    }
 }
 
 #[test]
@@ -213,6 +390,9 @@ fn all_list_modes_preserve_bytes_times_attributes_and_directory_contents() {
         vec!["list", "-l"],
         vec!["list", "--json"],
         vec!["list", "-l", "--json"],
+        vec!["list", "-r"],
+        vec!["list", "-r", "--long"],
+        vec!["list", "-r", "--json"],
     ] {
         let result = list(directory.path(), &args);
         assert_eq!(result.status.code(), Some(0));
@@ -374,6 +554,10 @@ fn list_rejects_extra_arguments_and_options_and_supports_directory_after_separat
         vec!["get", "a", "--long", "--json"],
         vec!["set", "a", "body", "-l", "--json"],
         vec!["remove", "a", "--long", "--json"],
+        vec!["list", "--recursive", "-r", "--json"],
+        vec!["get", "a", "-r", "--json"],
+        vec!["set", "a", "body", "--recursive", "--json"],
+        vec!["remove", "a", "-r", "--json"],
     ] {
         let result = list(directory.path(), &args);
         assert_eq!(result.status.code(), Some(2));

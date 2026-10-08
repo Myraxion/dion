@@ -1,4 +1,4 @@
-use crate::{comment::Record, error::Error};
+use crate::{comment, comment::Extension, error::Error, storage};
 use std::{
     cmp::Ordering,
     collections::HashSet,
@@ -8,23 +8,28 @@ use std::{
 };
 use unicode_width::UnicodeWidthStr;
 
-pub struct Entry<'a> {
-    pub record: Record<'a>,
+#[derive(serde::Serialize)]
+pub struct Entry {
+    pub name: String,
+    pub comment: String,
+    pub extension: Extension,
+    #[serde(skip)]
     pub directory: bool,
+    #[serde(skip)]
     name_utf16: Vec<u16>,
 }
 
-pub fn columns(output: &mut impl Write, entries: &[Entry<'_>]) -> io::Result<()> {
+pub fn columns(output: &mut impl Write, entries: &[Entry]) -> io::Result<()> {
     let width = entries
         .iter()
-        .map(|entry| entry.record.name.width() + usize::from(entry.directory))
+        .map(|entry| entry.name.width() + usize::from(entry.directory))
         .max()
         .unwrap_or(0);
     for entry in entries {
-        let name = entry.record.name;
+        let name = &entry.name;
         let marker = if entry.directory { "\\" } else { "" };
         let padding = " ".repeat(width - name.width() - marker.len() + 2);
-        for (index, line) in entry.record.comment.split('\n').enumerate() {
+        for (index, line) in entry.comment.split('\n').enumerate() {
             if index == 0 {
                 writeln!(output, "{name}{marker}{padding}{line}")?;
             } else {
@@ -35,15 +40,15 @@ pub fn columns(output: &mut impl Write, entries: &[Entry<'_>]) -> io::Result<()>
     Ok(())
 }
 
-pub fn long(output: &mut impl Write, entries: &[Entry<'_>]) -> io::Result<()> {
+pub fn long(output: &mut impl Write, entries: &[Entry]) -> io::Result<()> {
     for entry in entries {
         writeln!(
             output,
             "{}{}",
-            entry.record.name,
+            entry.name,
             if entry.directory { "\\" } else { "" }
         )?;
-        for line in entry.record.comment.split('\n') {
+        for line in entry.comment.split('\n') {
             writeln!(output, "    {line}")?;
         }
         writeln!(output)?;
@@ -51,12 +56,30 @@ pub fn long(output: &mut impl Write, entries: &[Entry<'_>]) -> io::Result<()> {
     Ok(())
 }
 
-/// Orders only the supplied records; directory entries provide type information.
-pub fn ordered<'a>(directory: &Path, records: Vec<Record<'a>>) -> Result<Vec<Entry<'a>>, Error> {
-    if records.is_empty() {
-        return Ok(Vec::new());
+/// Collects all records before rendering, so a later read failure emits no stdout.
+pub fn collect(directory: &Path, recursive: bool) -> Result<Vec<Entry>, Error> {
+    let mut entries = Vec::new();
+    collect_directory(directory, "", recursive, &mut entries)?;
+    Ok(entries)
+}
+
+fn collect_directory(
+    directory: &Path,
+    prefix: &str,
+    recursive: bool,
+    output: &mut Vec<Entry>,
+) -> Result<(), Error> {
+    let file = directory.join("descript.ion");
+    let bytes = storage::read(&file)?;
+    let records = match &bytes {
+        Some(bytes) => comment::parse(bytes).map_err(|error| error.at_file(&file))?,
+        None => Vec::new(),
+    };
+    if records.is_empty() && !recursive {
+        return Ok(());
     }
     let mut directories = HashSet::new();
+    let mut children = Vec::new();
     for entry in fs::read_dir(directory).map_err(|error| Error::io(error, directory))? {
         let entry = entry.map_err(|error| Error::io(error, directory))?;
         let kind = entry
@@ -69,8 +92,24 @@ pub fn ordered<'a>(directory: &Path, records: Vec<Record<'a>>) -> Result<Vec<Ent
         };
         #[cfg(not(windows))]
         let is_directory = kind.is_dir();
-        if is_directory && let Some(name) = entry.file_name().to_str() {
-            directories.insert(name.to_lowercase());
+        if is_directory {
+            let name = entry.file_name();
+            if let Some(name) = name.to_str() {
+                directories.insert(name.to_lowercase());
+            }
+            // Windows file types classify both directory symlinks and Junctions
+            // as symlinks; other directory reparse points remain traversable.
+            if recursive && kind.is_dir() {
+                let name = name
+                    .to_str()
+                    .ok_or_else(|| {
+                        Error::new("invalid_encoding", "Directory name is not valid UTF-8", 1)
+                            .at_file(&entry.path())
+                    })?
+                    .to_owned();
+                let key: Vec<_> = name.encode_utf16().chain(Some(0)).collect();
+                children.push((name, key, entry.path()));
+            }
         }
     }
     // Lookup uses the complete record name, never a path derived from that name.
@@ -79,7 +118,9 @@ pub fn ordered<'a>(directory: &Path, records: Vec<Record<'a>>) -> Result<Vec<Ent
         .map(|record| Entry {
             directory: directories.contains(&record.name.to_lowercase()),
             name_utf16: record.name.encode_utf16().chain(Some(0)).collect(),
-            record,
+            name: record.name.to_owned(),
+            comment: record.comment.into_owned(),
+            extension: record.extension,
         })
         .collect();
     entries.sort_by(|a, b| {
@@ -88,7 +129,16 @@ pub fn ordered<'a>(directory: &Path, records: Vec<Record<'a>>) -> Result<Vec<Ent
             .then_with(|| natural_cmp(&a.name_utf16, &b.name_utf16))
             .then_with(|| a.name_utf16.cmp(&b.name_utf16))
     });
-    Ok(entries)
+    for mut entry in entries {
+        // Append the complete legacy name as text, never as path components.
+        entry.name.insert_str(0, prefix);
+        output.push(entry);
+    }
+    children.sort_by(|a, b| natural_cmp(&a.1, &b.1).then_with(|| a.1.cmp(&b.1)));
+    for (name, _, path) in children {
+        collect_directory(&path, &format!("{prefix}{name}\\"), true, output)?;
+    }
+    Ok(())
 }
 
 #[cfg(windows)]

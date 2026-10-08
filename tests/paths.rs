@@ -337,10 +337,86 @@ fn check_link_entry(directory: &Path, link: &Path, target_parent: &Path, is_dir:
         success(&result);
         assert_eq!(result.stdout, b"child  inside\n");
         assert_eq!(fs::read(&inner).unwrap(), b"\xef\xbb\xbfchild inside\n");
+        fs::create_dir(link.join("nested")).unwrap();
+        fs::write(link.join("nested/descript.ion"), b"\xef\xbb\xbfdeep nested").unwrap();
+        for options in [vec!["-r"], vec!["--recursive", "-l"], vec!["-r", "--json"]] {
+            let mut args = vec!["list"];
+            args.extend(options.iter().copied());
+            let result = run(directory, &args);
+            success(&result);
+            assert!(!String::from_utf8_lossy(&result.stdout).contains("inside"));
+            assert!(!String::from_utf8_lossy(&result.stdout).contains("nested"));
+            if !options.contains(&"--json") {
+                assert!(String::from_utf8_lossy(&result.stdout).starts_with("link\\"));
+            }
+            args.insert(1, path);
+            let result = run(directory, &args);
+            success(&result);
+            if options.contains(&"--json") {
+                assert_eq!(
+                    serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap(),
+                    serde_json::json!({"entries":[
+                        {"name":"child", "comment":"inside", "extension":"none"},
+                        {"name":"nested\\deep", "comment":"nested", "extension":"none"},
+                    ]})
+                );
+            } else {
+                let text = String::from_utf8(result.stdout).unwrap();
+                assert!(text.contains("inside"));
+                assert!(text.contains("nested\\deep"));
+            }
+        }
     }
     success(&run(directory, &["remove", path]));
     assert_eq!(fs::read(&file).unwrap(), b"\xef\xbb\xbfother untouched\r");
     assert_eq!(fs::read(&target_file).unwrap(), target_bytes);
+}
+
+#[test]
+fn recursive_legacy_names_remain_complete_and_never_visit_paths_named_by_records() {
+    let directory = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(outside.path().join("descript.ion"), b"invalid encoding").unwrap();
+    fs::create_dir_all(directory.path().join("child/nested")).unwrap();
+    let names = [
+        ".",
+        "..",
+        "../outside",
+        "nested\\",
+        "nested/path",
+        "nested\\path",
+        outside.path().to_str().unwrap(),
+    ];
+    let bytes = format!(
+        "\u{feff}{}",
+        names
+            .iter()
+            .map(|name| format!("\"{name}\" body\r\n"))
+            .collect::<String>()
+    );
+    fs::write(directory.path().join("child/descript.ion"), &bytes).unwrap();
+    let result = run(directory.path(), &["list", "-r", "--json"]);
+    success(&result);
+    let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    let entries = value["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), names.len());
+    for name in names {
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry["name"] == format!("child\\{name}"))
+        );
+    }
+    let result = run(directory.path(), &["list", "-r", "-l"]);
+    success(&result);
+    let text = String::from_utf8(result.stdout).unwrap();
+    for name in names {
+        assert!(text.contains(&format!("child\\{name}\n    body\n\n")));
+    }
+    assert_eq!(
+        fs::read(directory.path().join("child/descript.ion")).unwrap(),
+        bytes.as_bytes()
+    );
 }
 
 #[cfg(windows)]
