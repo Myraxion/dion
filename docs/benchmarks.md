@@ -1,5 +1,7 @@
 # Dion 本地性能基线报告 (Issue #11)
 
+本文保留本次测量结果，新版本结果另存报告。报告与测量脚本的归档提交为 [`0c292229`](https://github.com/Myraxion/dion/commit/0c292229cdd363727a167a2de2fc82d7eeb96368)，项目版本为 v0.1.0。原始记录未保存被测 exe 的构建提交或哈希，不能仅凭报告提交认定二进制精确来源；后续测量应同时记录源码提交和产物 SHA-256。
+
 - 测量日期: 2026-10-08 14:44:21 (Asia/Shanghai)
 - 可执行文件: `dion.exe` (Release 构建, `cargo build --release --locked`)
 - 产物体积: **354816 字节** (346.5 KiB, **0.34 MiB**)
