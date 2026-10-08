@@ -6,7 +6,7 @@
 
 - 第一版提供查看单条备注、列出目录备注、设置或覆盖备注、删除备注。
 - 第一版只读写 UTF-8；其他编码明确报错。
-- 支持 Windows 10/11 x64；UNC 支持声明限定为经过验收的 Windows SMB 环境。目前仅本机 SMB 回环已验证，独立远端 Windows SMB 服务端待验收；WebDAV 不在支持声明内，Samba/NAS 尚未验收。
+- 支持 Windows 10/11 x64 的本地文件系统。
 - 允许编译期 Rust 依赖；交付单个 exe，用户无需额外安装运行时。
 - 开发语言为 Rust；服务命令行用户、Agent 与脚本。
 
@@ -38,9 +38,9 @@ dion remove <path>
 - `get/set/remove` 操作指定文件或文件夹自身的备注，使用它所在父目录的 `descript.ion`。
 - `list` 列出指定目录备注文件中的记录，省略目录时使用当前目录。
 - `get ./photos` 查看 photos 文件夹自身的备注；`list ./photos` 列出 photos 内部条目的备注。
-- 支持普通相对路径、绝对路径、UNC 及 Windows 长路径，包括扩展 UNC 路径 `\\?\UNC\server\share\...`。
+- 支持本地普通相对路径、绝对路径及 Windows 长路径，包括扩展本地路径 `\\?\D:\资料\...`。
 - 文件或文件夹符号链接、目录联接按输入路径对应条目自身操作，使用它所在父目录的备注文件，不转而操作链接目标的备注。
-- 磁盘根和 UNC 共享根可以 `list`；根本身没有用于存放自身备注的父目录，对其执行 `get/set/remove` 报参数错误。
+- 磁盘根可以 `list`；根本身没有用于存放自身备注的父目录，对其执行 `get/set/remove` 报参数错误。
 - `list` 只读取备注记录，不检查目标是否存在，不枚举目录条目，不递归。
 
 ## 已确认的输入输出契约
@@ -109,7 +109,7 @@ dion remove <path>
 
 - 先在同目录写完整临时文件，再提交替换；不直接截断原文件，也不在替换失败后回退为原地覆盖。见 [ADR-0003](adr/0003-temporary-file-and-single-writer.md)。
 - 格式和输入校验失败不修改文件；提交阶段的 I/O 错误可能出现部分完成状态，不承诺所有失败均保持原文件完全不变。
-- 第一版按单写者使用；经过验收的 Windows SMB UNC 访问在支持范围内，但不保证多个进程或多台机器同时修改同一备注文件。
+- 第一版按单写者使用，不保证多个进程同时修改同一备注文件。
 - 检测到占用或内容变化时报错，不自动重试或合并；内容变化检测不等于多写者协调保证。
 - 新建备注文件默认设置隐藏属性；修改已有文件时保留其属性、创建时间和访问权限。
 - 对只读备注文件的修改或删除报错，不自动解除只读；只读属性不阻止读取。不修改被备注文件或文件夹的属性。
@@ -120,11 +120,10 @@ dion remove <path>
 - 优先冷启动和普通目录操作，以 100 条和 1 万条记录建立本地基准。
 - 记录启动、查询、列出、写入耗时，峰值内存及 exe 体积。
 - 取得 Release 构建基线后再确定耗时门槛；exe 体积暂以不超过 5 MiB 为目标。
-- UNC 单独测量和报告，不设统一耗时门槛。
 
 ## 验收场景
 
-用户已确认以真实 CLI 进程作为功能测试入口：在隔离目录运行命令，检查 stdout、stderr、退出码、备注文件字节与属性。UNC 使用真实共享环境验证，性能独立测量；完整测试决定见实施规格。
+用户已确认以真实 CLI 进程作为功能测试入口：在隔离目录运行命令，检查 stdout、stderr、退出码、备注文件字节与属性。本地性能使用同一个 exe 测量；完整测试决定见实施规格。
 
 - 合法样本的单行、多行、反斜杠、Unicode 名称、首尾空白、空记录、仅头文件均可正确读取。
 - 修改一条记录后，其他记录与文件原有内容按原字节保留；相同内容设置不改变文件。
@@ -133,7 +132,7 @@ dion remove <path>
 - 设置需要目标存在，孤立记录可以读取和删除；不存在的备注记录删除成功且不创建文件。
 - 删除最后一条实际记录后删除备注文件；已有空记录和未知扩展记录仍计入剩余记录。原本无记录的文件不会因无效目标删除请求而被清理。
 - 三种输入来源互斥，中文及实际多行通过 UTF-8 输入正确传递；文本和 JSON 输出、stderr、退出码符合契约。
-- 验证本地与真实 UNC 环境的读取、创建、替换、删除、属性保留和权限错误；未执行的 UNC 场景明确标记为未验证，不用本地测试替代。
+- 验证本地文件的读取、创建、替换、删除、属性保留和权限错误。
 - 记录 Release 性能基线及 exe 体积；具体耗时门槛在基线取得后确认。
 
 这些验收场景供实现阶段使用，当前尚未执行应用测试或性能测量。
@@ -141,7 +140,7 @@ dion remove <path>
 ## 范围与已知限制
 
 - 第一版提供四个基础命令；编码转换、递归搜索、批量导入导出、自动清理、文件复制/移动/重命名及备份选项不在本版范围。
-- UNC 支持指可通过经过验收的 Windows SMB 共享路径执行基础操作；UNC 路径形式不等于任意后端兼容，也不等于跨机器并发编辑保证或所有断网/断电条件下的事务保证。验收环境、WebDAV 实测限制与独立服务端待办见 [UNC 验证](unc-validation.md)。
+- UNC、SMB、WebDAV 和网络映射盘不作兼容性承诺，不设共享验收或性能要求。现有文件操作可能接受这些路径，但不保证可用；不主动识别或拒绝网络存储。过去的实测仅作[历史记录](archive/unc-validation.md)。
 - exe 单文件分发允许编译期 Rust 依赖，不要求用户额外安装运行时。
 - 尚未完整核验的 TC 行为已在相关规则旁标出，不影响已确认的 Dion 产品选择。
 
@@ -158,6 +157,6 @@ dion remove <path>
 - [TC 作者：UTF-8 多行扩展标记](https://ghisler.ch/board/viewtopic.php?p=318281#p318281)
 - [TC 作者：标记控制转义解释及备注容量](https://ghisler.ch/board/viewtopic.php?p=146307#p146307)
 - [Microsoft：Windows 大小写敏感目录](https://learn.microsoft.com/en-us/windows/wsl/case-sensitivity)
-- [Microsoft：长路径与扩展 UNC 路径](https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation)
+- [Microsoft：Windows 长路径限制](https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation)
 - [Microsoft：文件替换与部分失败语义](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew)
 - [Microsoft：Windows PowerShell 与 PowerShell 的编码差异](https://learn.microsoft.com/en-us/powershell/scripting/whats-new/differences-from-windows-powershell?view=powershell-7.5)

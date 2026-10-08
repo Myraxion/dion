@@ -240,7 +240,7 @@ fn all_commands_support_long_unicode_paths_and_orphan_records() {
 
 #[cfg(windows)]
 #[test]
-fn roots_reject_entry_commands_before_accessing_disk_or_share() {
+fn roots_reject_entry_commands_before_accessing_disk() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory
         .path()
@@ -255,14 +255,7 @@ fn roots_reject_entry_commands_before_accessing_disk_or_share() {
         format!("\\\\?\\{root}"),
         format!("\\\\?\\{root}.."),
     ];
-    let share_roots = [
-        r"\\dion-unavailable.invalid\share",
-        r"\\dion-unavailable.invalid\share\",
-        r"\\?\UNC\dion-unavailable.invalid\share",
-        r"\\?\UNC\dion-unavailable.invalid\share\",
-        r"\\?\UNC\dion-unavailable.invalid\share\.",
-    ];
-    for path in disk_roots.iter().map(String::as_str).chain(share_roots) {
+    for path in disk_roots.iter().map(String::as_str) {
         for command in ["get", "set", "remove"] {
             for json in [false, true] {
                 let mut args = vec![command, path];

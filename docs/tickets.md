@@ -11,10 +11,12 @@
 | [#6](https://github.com/Myraxion/dion/issues/6) | 多行设置与三种输入来源 | [#5](https://github.com/Myraxion/dion/issues/5) |
 | [#7](https://github.com/Myraxion/dion/issues/7) | 删除备注与最后记录清理 | [#5](https://github.com/Myraxion/dion/issues/5) |
 | [#8](https://github.com/Myraxion/dion/issues/8) | Windows 长路径、根与链接定位 | [#4](https://github.com/Myraxion/dion/issues/4)、[#7](https://github.com/Myraxion/dion/issues/7) |
-| [#9](https://github.com/Myraxion/dion/issues/9) | UNC 网络共享读写 | [#6](https://github.com/Myraxion/dion/issues/6)、[#8](https://github.com/Myraxion/dion/issues/8) |
+| [#9](https://github.com/Myraxion/dion/issues/9) | 已取消：UNC 网络共享读写 | 不再作为第一版任务或发布阻塞项 |
 | [#10](https://github.com/Myraxion/dion/issues/10) | Total Commander 双向互操作 | [#4](https://github.com/Myraxion/dion/issues/4)、[#6](https://github.com/Myraxion/dion/issues/6)、[#7](https://github.com/Myraxion/dion/issues/7) |
-| [#11](https://github.com/Myraxion/dion/issues/11) | Release 单 exe 与性能基线 | [#9](https://github.com/Myraxion/dion/issues/9)、[#10](https://github.com/Myraxion/dion/issues/10) |
+| [#11](https://github.com/Myraxion/dion/issues/11) | Release 单 exe 与本地性能基线 | [#10](https://github.com/Myraxion/dion/issues/10) |
 
 发布时可以立即开始的是 Issue #2。后续从所有阻塞项已完成的任务中选取；执行时以 GitHub 当前原生依赖状态为准。各 Issue 均包含交付行为、验收标准和父规格引用，完整任务正文与标签已回读核验。
 
 任务发布过程中未修改父规格的正文、标题、状态、标签或评论。此索引记录任务拆分，不表示已开始或完成实现。
+
+2026-10-08 用户取消网络共享支持承诺、专用共享测试和验收入口；#9 按取消范围关闭，#11 移除对 #9 的原生阻塞依赖，并仅要求本地性能基线。#1 和 #8 的当前要求同步限定本地范围；此前实测结果归入[历史记录](archive/unc-validation.md)。
