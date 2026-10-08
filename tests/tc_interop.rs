@@ -91,7 +91,7 @@ fn tc_root_fixture_decodes_single_line_spaced_unicode_and_multiline() {
         })
     );
 
-    // list 列出全部记录并保持原始顺序
+    // list 列出全部记录并使用自然顺序
     let res = dion(dir.path(), &["list", "--json"]);
     assert_eq!(res.status.code(), Some(0));
     assert_eq!(

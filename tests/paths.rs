@@ -124,7 +124,7 @@ fn extended_directory_dot_path_operates_on_the_directory_entry() {
     );
     let result = run(directory.path(), &["list", &path]);
     assert_eq!(result.status.code(), Some(0), "{:?}", result.stderr);
-    assert_eq!(result.stdout, b"child:\ninner\n");
+    assert_eq!(result.stdout, b"child  inner\n");
     let result = run(directory.path(), &["remove", &path]);
     assert_eq!(result.status.code(), Some(0), "{:?}", result.stderr);
     assert_eq!(
@@ -201,7 +201,7 @@ fn all_commands_support_long_unicode_paths_and_orphan_records() {
         success(&result);
         assert_eq!(
             result.stdout,
-            "照片 😀.txt:\n更新\nmissing:\norphan\nkeep:\nuntouched\n".as_bytes()
+            "keep         untouched\nmissing      orphan\n照片 😀.txt  更新\n".as_bytes()
         );
         let result = run(directory.path(), &["--json", "list", &path]);
         success(&result);
@@ -310,12 +310,32 @@ fn check_link_entry(directory: &Path, link: &Path, target_parent: &Path, is_dir:
     success(&result);
     let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(value["entries"][0]["comment"], "updated");
+    let result = run(directory, &["list", directory.to_str().unwrap()]);
+    success(&result);
+    assert_eq!(
+        result.stdout,
+        if is_dir {
+            b"link\\  updated\nother  untouched\n".as_slice()
+        } else {
+            b"link   updated\nother  untouched\n".as_slice()
+        }
+    );
+    let result = run(directory, &["list", directory.to_str().unwrap(), "-l"]);
+    success(&result);
+    assert_eq!(
+        result.stdout,
+        if is_dir {
+            b"link\\\n    updated\n\nother\n    untouched\n\n".as_slice()
+        } else {
+            b"link\n    updated\n\nother\n    untouched\n\n".as_slice()
+        }
+    );
     if is_dir {
         let inner = link.join("descript.ion");
         fs::write(&inner, b"\xef\xbb\xbfchild inside\n").unwrap();
         let result = run(directory, &["list", path]);
         success(&result);
-        assert_eq!(result.stdout, b"child:\ninside\n");
+        assert_eq!(result.stdout, b"child  inside\n");
         assert_eq!(fs::read(&inner).unwrap(), b"\xef\xbb\xbfchild inside\n");
     }
     success(&run(directory, &["remove", path]));

@@ -1,4 +1,4 @@
-use crate::{comment, error::Error, storage};
+use crate::{comment, error::Error, listing, storage};
 use std::{
     env,
     ffi::OsString,
@@ -42,6 +42,7 @@ enum CommentSource {
 struct Arguments {
     positional: Vec<OsString>,
     source: Option<CommentSource>,
+    long: bool,
 }
 
 fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
@@ -49,6 +50,7 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
     let mut after_separator = false;
     let mut json_seen = false;
     let mut source = None;
+    let mut long = false;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         if after_separator {
@@ -57,6 +59,8 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
             after_separator = true;
         } else if arg == "--json" && !json_seen {
             json_seen = true;
+        } else if (arg == "--long" || arg == "-l") && !long {
+            long = true;
         } else if (arg == "--stdin" || arg == "--comment-file") && source.is_none() {
             source = Some(if arg == "--stdin" {
                 CommentSource::Stdin
@@ -78,21 +82,34 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
             positional.push(arg.clone());
         }
     }
-    Ok(Arguments { positional, source })
+    Ok(Arguments {
+        positional,
+        source,
+        long,
+    })
 }
 
 fn execute(arguments: &Arguments, json: bool) -> Result<(), Error> {
     let args = &arguments.positional;
+    if arguments.long && args.first().is_none_or(|command| command != "list") {
+        return Err(Error::new(
+            "invalid_argument",
+            "--long is only supported by list",
+            2,
+        ));
+    }
     match args.first().and_then(|arg| arg.to_str()) {
         Some("get") if args.len() == 2 && arguments.source.is_none() => get(args, json),
         Some("remove") if args.len() == 2 && arguments.source.is_none() => remove(args, json),
-        Some("list") if args.len() <= 2 && arguments.source.is_none() => list(args, json),
+        Some("list") if args.len() <= 2 && arguments.source.is_none() => {
+            list(args, json, arguments.long)
+        }
         Some("set") if args.len() == if arguments.source.is_some() { 2 } else { 3 } => {
             set(args, arguments.source.as_ref(), json)
         }
         _ => Err(Error::new(
             "invalid_argument",
-            "Usage: dion [--json] get <path> | remove <path> | list [directory] | set <path> (<comment> | --stdin | --comment-file <file>)",
+            "Usage: dion [--json] get <path> | remove <path> | list [directory] [--long|-l] | set <path> (<comment> | --stdin | --comment-file <file>)",
             2,
         )),
     }
@@ -199,7 +216,7 @@ fn read_comment(source: &CommentSource) -> Result<String, Error> {
     })
 }
 
-fn list(args: &[OsString], json: bool) -> Result<(), Error> {
+fn list(args: &[OsString], json: bool, long: bool) -> Result<(), Error> {
     let directory = normalize_verbatim_path(
         args.get(1)
             .map_or_else(|| PathBuf::from("."), PathBuf::from),
@@ -210,13 +227,15 @@ fn list(args: &[OsString], json: bool) -> Result<(), Error> {
         Some(bytes) => comment::parse(bytes).map_err(|error| error.at_file(&file))?,
         None => Vec::new(),
     };
+    let entries = listing::ordered(&directory, records)?;
     let mut output = io::stdout().lock();
     let result = if json {
+        let records: Vec<_> = entries.iter().map(|entry| &entry.record).collect();
         write_json(&mut output, &serde_json::json!({ "entries": records }))
+    } else if long {
+        listing::long(&mut output, &entries)
     } else {
-        records
-            .iter()
-            .try_for_each(|record| writeln!(output, "{}:\n{}", record.name, record.comment))
+        listing::columns(&mut output, &entries)
     };
     result.map_err(|error| Error::new("io_error", error.to_string(), 1))
 }
