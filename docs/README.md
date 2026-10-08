@@ -6,6 +6,8 @@
 | --- | --- |
 | [项目 README](../README.md) | 核心特性、快速上手和性能测试 |
 | [行为契约](spec.md) | 当前命令、输入输出、备注格式、提交规则与边界 |
+| [List、编辑与帮助增强规格](list-edit-spec.md) | 已确认的规格快照，实施进度见 [Issue #12](https://github.com/Myraxion/dion/issues/12) |
+| [List 与编辑增强设计](list-edit-design.md) | 展示示例与设计调研背景 |
 | [领域词汇表](../GLOSSARY.md) | 统一领域术语 |
 | [ADR](adr/) | 关键决策及其理由；策略改变时记录替代关系 |
 | [Rust 实践](rust-practices.md) | 实现、评审和开发环境规范 |
