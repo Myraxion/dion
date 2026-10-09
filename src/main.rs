@@ -1,5 +1,6 @@
 mod cli;
 mod comment;
+mod editor;
 mod error;
 mod listing;
 mod storage;

@@ -1,4 +1,4 @@
-use crate::{comment, error::Error, listing, storage};
+use crate::{comment, editor, error::Error, listing, storage};
 use std::{
     env,
     ffi::OsString,
@@ -37,6 +37,7 @@ pub fn run() -> ExitCode {
 enum CommentSource {
     Stdin,
     File(PathBuf),
+    Edit,
 }
 
 struct Arguments {
@@ -69,9 +70,13 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
             recursive = true;
         } else if arg == "--tree" && !tree {
             tree = true;
-        } else if (arg == "--stdin" || arg == "--comment-file") && source.is_none() {
+        } else if (arg == "--stdin" || arg == "--comment-file" || arg == "--edit")
+            && source.is_none()
+        {
             source = Some(if arg == "--stdin" {
                 CommentSource::Stdin
+            } else if arg == "--edit" {
+                CommentSource::Edit
             } else {
                 let file = args.next().filter(|arg| {
                     !arg.to_str().is_some_and(|arg| arg.starts_with('-'))
@@ -132,7 +137,7 @@ fn execute(arguments: &Arguments, json: bool) -> Result<(), Error> {
         }
         _ => Err(Error::new(
             "invalid_argument",
-            "Usage: dion [--json] get <path> | remove <path> | list [directory] [--long|-l|--tree] [--recursive|-r] | set <path> (<comment> | --stdin | --comment-file <file>)",
+            "Usage: dion [--json] get <path> | remove <path> | list [directory] [--long|-l|--tree] [--recursive|-r] | set <path> (<comment> | --stdin | --comment-file <file> | --edit)",
             2,
         )),
     }
@@ -177,6 +182,17 @@ fn remove(args: &[OsString], json: bool) -> Result<(), Error> {
 
 fn set(args: &[OsString], source: Option<&CommentSource>, json: bool) -> Result<(), Error> {
     let path = absolute_path(&args[1])?;
+    if matches!(source, Some(CommentSource::Edit)) {
+        let changed = edit_comment(&path)?;
+        if json {
+            write_json(
+                &mut io::stdout().lock(),
+                &serde_json::json!({"changed": changed}),
+            )
+            .map_err(|error| Error::new("io_error", error.to_string(), 1))?;
+        }
+        return Ok(());
+    }
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -228,6 +244,13 @@ fn read_comment(source: &CommentSource) -> Result<String, Error> {
             bytes
         }
         CommentSource::File(file) => std::fs::read(file).map_err(|error| Error::io(error, file))?,
+        CommentSource::Edit => {
+            return Err(Error::new(
+                "invalid_argument",
+                "Editing requires a target path",
+                2,
+            ));
+        }
     };
     let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
     std::str::from_utf8(bytes).map(str::to_owned).map_err(|_| {
@@ -235,8 +258,84 @@ fn read_comment(source: &CommentSource) -> Result<String, Error> {
         match source {
             CommentSource::File(file) => error.at_file(file),
             CommentSource::Stdin => error,
+            CommentSource::Edit => error,
         }
     })
+}
+
+fn edit_comment(path: &std::path::Path) -> Result<bool, Error> {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| Error::new("invalid_argument", "Path must have a UTF-8 entry name", 2))?;
+    let file = path
+        .parent()
+        .ok_or_else(|| Error::new("invalid_argument", "Path has no parent", 2))?
+        .join("descript.ion");
+    let original = storage::read(&file)?;
+    let records = original
+        .as_deref()
+        .map(comment::parse)
+        .transpose()
+        .map_err(|error| error.at_file(&file))?
+        .unwrap_or_default();
+    let key = name.to_lowercase();
+    let prefill = records
+        .iter()
+        .find(|record| record.name.to_lowercase() == key)
+        .map_or("", |record| record.comment.as_ref());
+    let text = editor::create(prefill)?;
+    let result = (|| {
+        editor::run(&text)?;
+        // This includes no-op edits and file appearance/disappearance. Retain the
+        // original baseline for the later storage commit's own conflict checks.
+        if storage::read(&file)? != original {
+            return Err(Error::new(
+                "content_changed",
+                "Description file content changed while editing",
+                1,
+            )
+            .at_file(&file));
+        }
+        let body = read_comment(&CommentSource::File(text.clone()))?;
+        if body.is_empty() {
+            let changed = match original.as_deref() {
+                None => false,
+                Some(original) => {
+                    match comment::remove(original, name).map_err(|error| error.at_file(&file))? {
+                        comment::Removal::Unchanged => false,
+                        comment::Removal::Update(bytes) => {
+                            storage::commit(&file, Some(original), &bytes)?;
+                            true
+                        }
+                        comment::Removal::DeleteFile => {
+                            storage::remove(&file, original)?;
+                            true
+                        }
+                    }
+                }
+            };
+            std::fs::remove_file(&text).map_err(|error| Error::io(error, &text))?;
+            return Ok(changed);
+        }
+        if body.trim().is_empty() || body.contains(['\0', '\u{4}']) {
+            return Err(Error::new(
+                "invalid_argument",
+                "A nonblank comment without NUL or control character 04 is required",
+                2,
+            ));
+        }
+        let body = body.replace("\r\n", "\n").replace('\r', "\n");
+        std::fs::symlink_metadata(path).map_err(|error| Error::io(error, path))?;
+        let bytes =
+            comment::set(original.as_deref(), name, &body).map_err(|error| error.at_file(&file))?;
+        if let Some(bytes) = &bytes {
+            storage::commit(&file, original.as_deref(), bytes)?;
+        }
+        std::fs::remove_file(&text).map_err(|error| Error::io(error, &text))?;
+        Ok(bytes.is_some())
+    })();
+    result.map_err(|error| editor::recovery(error, &text))
 }
 
 fn list(
