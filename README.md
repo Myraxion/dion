@@ -46,6 +46,27 @@ dion [--json] remove <path>
 - **结构化输出**：全局支持 `--json` 输出机器可读的 JSON 格式及稳定退出码。
 - **作用对象区分**：`get`、`set`、`remove` 操作指定条目自身的备注（记录保存在其父目录中）；`list` 查询指定目录内部条目的备注。
 
+## 构建与发布
+
+本地安装 Rust stable 和 MSVC 构建工具后，运行统一检查入口：
+
+```powershell
+.\scripts\check.ps1
+```
+
+脚本依次执行格式检查、Clippy、完整测试和 Release 编译，产物为 `target/release/dion.exe`。默认静态链接 MSVC CRT。
+
+GitHub Actions 在 push 和 pull request 时自动执行上述检查，也支持手动触发。推送 `v*` 版本标签时，[发布流程](.github/workflows/release.yml) 会在 Windows x64 上检查并编译，通过后创建 GitHub Release，自动生成发布说明并上传 `dion.exe`。
+
+发布前更新 `Cargo.toml` 和 `Cargo.lock` 中的版本号，将代码与工作流提交并推送，再推送对应标签，例如：
+
+```powershell
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+用户可在 [GitHub Releases](https://github.com/Myraxion/dion/releases) 下载 `dion.exe`。
+
 ## 性能测试
 
 2026-10-08 在 Windows 11 x64、AMD Ryzen 9 7940H、31.2 GB 内存的本地环境中测得以下 Release 基线。每个场景预热后运行 5 次，表中为平均壁钟耗时，包含进程启动和退出；查询与列表使用文本输出。
