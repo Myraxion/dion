@@ -154,22 +154,7 @@ fn remove(args: &[OsString], json: bool) -> Result<(), Error> {
         .ok_or_else(|| Error::new("invalid_argument", "Path has no parent", 2))?
         .join("descript.ion");
     let original = storage::read(&file)?;
-    let changed = match &original {
-        Some(original) => {
-            match comment::remove(original, name).map_err(|error| error.at_file(&file))? {
-                comment::Removal::Unchanged => false,
-                comment::Removal::Update(bytes) => {
-                    storage::commit(&file, Some(original), &bytes)?;
-                    true
-                }
-                comment::Removal::DeleteFile => {
-                    storage::remove(&file, original)?;
-                    true
-                }
-            }
-        }
-        None => false,
-    };
+    let changed = remove_record(&file, original.as_deref(), name)?;
     if json {
         write_json(
             &mut io::stdout().lock(),
@@ -204,14 +189,7 @@ fn set(args: &[OsString], source: Option<&CommentSource>, json: bool) -> Result<
             .to_owned(),
         Some(source) => read_comment(source)?,
     };
-    if body.trim().is_empty() || body.contains(['\0', '\u{4}']) {
-        return Err(Error::new(
-            "invalid_argument",
-            "A nonblank comment without NUL or control character 04 is required",
-            2,
-        ));
-    }
-    let body = body.replace("\r\n", "\n").replace('\r', "\n");
+    let body = validate_body(&body)?;
     std::fs::symlink_metadata(&path).map_err(|error| Error::io(error, &path))?;
     let file = path
         .parent()
@@ -263,6 +241,38 @@ fn read_comment(source: &CommentSource) -> Result<String, Error> {
     })
 }
 
+fn validate_body(body: &str) -> Result<String, Error> {
+    if body.trim().is_empty() || body.contains(['\0', '\u{4}']) {
+        return Err(Error::new(
+            "invalid_argument",
+            "A nonblank comment without NUL or control character 04 is required",
+            2,
+        ));
+    }
+    Ok(body.replace("\r\n", "\n").replace('\r', "\n"))
+}
+
+fn remove_record(
+    file: &std::path::Path,
+    original: Option<&[u8]>,
+    name: &str,
+) -> Result<bool, Error> {
+    let Some(original) = original else {
+        return Ok(false);
+    };
+    match comment::remove(original, name).map_err(|error| error.at_file(file))? {
+        comment::Removal::Unchanged => Ok(false),
+        comment::Removal::Update(bytes) => {
+            storage::commit(file, Some(original), &bytes)?;
+            Ok(true)
+        }
+        comment::Removal::DeleteFile => {
+            storage::remove(file, original)?;
+            Ok(true)
+        }
+    }
+}
+
 fn edit_comment(path: &std::path::Path) -> Result<bool, Error> {
     let name = path
         .file_name()
@@ -298,42 +308,20 @@ fn edit_comment(path: &std::path::Path) -> Result<bool, Error> {
             .at_file(&file));
         }
         let body = read_comment(&CommentSource::File(text.clone()))?;
-        if body.is_empty() {
-            let changed = match original.as_deref() {
-                None => false,
-                Some(original) => {
-                    match comment::remove(original, name).map_err(|error| error.at_file(&file))? {
-                        comment::Removal::Unchanged => false,
-                        comment::Removal::Update(bytes) => {
-                            storage::commit(&file, Some(original), &bytes)?;
-                            true
-                        }
-                        comment::Removal::DeleteFile => {
-                            storage::remove(&file, original)?;
-                            true
-                        }
-                    }
-                }
-            };
-            std::fs::remove_file(&text).map_err(|error| Error::io(error, &text))?;
-            return Ok(changed);
-        }
-        if body.trim().is_empty() || body.contains(['\0', '\u{4}']) {
-            return Err(Error::new(
-                "invalid_argument",
-                "A nonblank comment without NUL or control character 04 is required",
-                2,
-            ));
-        }
-        let body = body.replace("\r\n", "\n").replace('\r', "\n");
-        std::fs::symlink_metadata(path).map_err(|error| Error::io(error, path))?;
-        let bytes =
-            comment::set(original.as_deref(), name, &body).map_err(|error| error.at_file(&file))?;
-        if let Some(bytes) = &bytes {
-            storage::commit(&file, original.as_deref(), bytes)?;
-        }
+        let changed = if body.is_empty() {
+            remove_record(&file, original.as_deref(), name)?
+        } else {
+            let body = validate_body(&body)?;
+            std::fs::symlink_metadata(path).map_err(|error| Error::io(error, path))?;
+            let bytes = comment::set(original.as_deref(), name, &body)
+                .map_err(|error| error.at_file(&file))?;
+            if let Some(bytes) = &bytes {
+                storage::commit(&file, original.as_deref(), bytes)?;
+            }
+            bytes.is_some()
+        };
         std::fs::remove_file(&text).map_err(|error| Error::io(error, &text))?;
-        Ok(bytes.is_some())
+        Ok(changed)
     })();
     result.map_err(|error| editor::recovery(error, &text))
 }

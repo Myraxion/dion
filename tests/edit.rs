@@ -121,7 +121,7 @@ fn clearing_removes_records_including_empty_orphan_and_unknown_extension() {
     }
 }
 
-fn rejected(output: &Output, exit: i32, code: &str, _dir: &Path) -> Vec<u8> {
+fn rejected(output: &Output, exit: i32, code: &str) -> Vec<u8> {
     assert_eq!(
         output.status.code(),
         Some(exit),
@@ -239,8 +239,7 @@ fn invalid_edit_input_is_retained_and_never_committed() {
                     .output()
                     .unwrap(),
                 exit,
-                code,
-                dir.path()
+                code
             ),
             body
         );
@@ -272,7 +271,7 @@ fn nonempty_unchanged_body_still_validates_input_target_and_extension() {
         if !target_exists {
             fs::remove_file(dir.path().join("照片 😀.txt")).unwrap();
         }
-        rejected(&edit(dir.path()).output().unwrap(), exit, code, dir.path());
+        rejected(&edit(dir.path()).output().unwrap(), exit, code);
         assert_eq!(
             fs::read(dir.path().join("descript.ion")).unwrap(),
             original.as_bytes()
@@ -291,8 +290,7 @@ fn launch_and_nonzero_exit_preserve_edit_text_without_commit() {
                 .output()
                 .unwrap(),
             1,
-            "io_error",
-            dir.path()
+            "io_error"
         ),
         b"old"
     );
@@ -305,8 +303,7 @@ fn launch_and_nonzero_exit_preserve_edit_text_without_commit() {
                 .output()
                 .unwrap(),
             1,
-            "io_error",
-            dir.path()
+            "io_error"
         ),
         b"edited but failed"
     );
@@ -444,8 +441,7 @@ fn readonly_description_allows_noop_but_retains_text_on_save_or_delete_failure()
                 rejected(
                     &cmd.env("EDIT_BODY", "body.txt").output().unwrap(),
                     1,
-                    "io_error",
-                    dir.path()
+                    "io_error"
                 ),
                 body
             );
@@ -526,7 +522,7 @@ fn detects_description_changes_even_when_edit_body_is_unchanged() {
                 fs::write(dir.path().join("body.txt"), body).unwrap();
                 cmd.env("EDIT_BODY", "body.txt");
             }
-            rejected(&cmd.output().unwrap(), 1, "content_changed", dir.path());
+            rejected(&cmd.output().unwrap(), 1, "content_changed");
             let file = dir.path().join("descript.ion");
             if action == "delete" {
                 assert!(!file.exists());
