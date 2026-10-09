@@ -110,7 +110,7 @@ fn invalid_help_topics_and_ordinary_argument_errors_keep_the_error_contract() {
 }
 
 #[test]
-fn overview_routes_show_chinese_usage_defaults_options_and_examples() {
+fn overview_routes_show_chinese_usage_options_and_key_defaults() {
     let directory = tempfile::tempdir().unwrap();
     for args in [
         vec!["--help"],
@@ -126,7 +126,6 @@ fn overview_routes_show_chinese_usage_defaults_options_and_examples() {
             "用法",
             "参数",
             "默认",
-            "示例",
             "get",
             "list",
             "set",
@@ -135,13 +134,13 @@ fn overview_routes_show_chinese_usage_defaults_options_and_examples() {
             "--help",
             "-h",
             "当前目录",
-            "UTF-8",
             "--",
             "条目自身",
             "目录内部",
         ] {
             assert!(text.contains(expected), "{args:?}: missing {expected}");
         }
+        assert!(!text.contains("示例"));
     }
     assert!(
         std::fs::read_dir(directory.path())
@@ -178,7 +177,6 @@ fn every_command_has_three_help_routes_without_required_operands() {
                 "Junction",
                 "起始目录",
                 "普通递归 JSON",
-                "entries",
             ],
         ),
         (
@@ -193,8 +191,7 @@ fn every_command_has_three_help_routes_without_required_operands() {
                 "互斥",
                 "VISUAL",
                 "EDITOR",
-                "notepad.exe",
-                "code --wait",
+                "Windows 记事本",
                 "正常退出",
                 "清空",
                 "纯空白",
@@ -206,7 +203,14 @@ fn every_command_has_three_help_routes_without_required_operands() {
         ),
         (
             "remove",
-            vec!["<path>", "父目录", "无记录", "最后一条", "静默", "changed"],
+            vec![
+                "<path>",
+                "无需目标存在",
+                "无记录",
+                "最后一条",
+                "静默",
+                "changed",
+            ],
         ),
     ] {
         let baseline = help(directory.path(), &["help", command]);
@@ -220,14 +224,13 @@ fn every_command_has_three_help_routes_without_required_operands() {
         ] {
             let text = help(directory.path(), &args);
             assert_eq!(text, baseline);
-            for expected in [
-                "用途", "用法", "参数", "默认", "示例", "--json", "--help", "-h", "--",
-            ]
-            .into_iter()
-            .chain(details.iter().copied())
+            for expected in ["用途", "用法", "参数", "默认", "--json", "--help", "-h"]
+                .into_iter()
+                .chain(details.iter().copied())
             {
                 assert!(text.contains(expected), "{args:?}: missing {expected}");
             }
+            assert!(!text.contains("示例"));
         }
     }
 }
