@@ -339,7 +339,24 @@ fn check_link_entry(directory: &Path, link: &Path, target_parent: &Path, is_dir:
         assert_eq!(fs::read(&inner).unwrap(), b"\xef\xbb\xbfchild inside\n");
         fs::create_dir(link.join("nested")).unwrap();
         fs::write(link.join("nested/descript.ion"), b"\xef\xbb\xbfdeep nested").unwrap();
-        for options in [vec!["-r"], vec!["--recursive", "-l"], vec!["-r", "--json"]] {
+        let result = run(directory, &["list", "--tree"]);
+        success(&result);
+        assert_eq!(
+            result.stdout,
+            "├── link\\  updated\n└── other  untouched\n".as_bytes()
+        );
+        let result = run(directory, &["list", path, "--tree"]);
+        success(&result);
+        assert_eq!(
+            result.stdout,
+            "├── nested\\\n│   └── deep  nested\n└── child  inside\n".as_bytes()
+        );
+        for options in [
+            vec!["-r"],
+            vec!["--recursive", "-l"],
+            vec!["-r", "--json"],
+            vec!["--tree", "--json"],
+        ] {
             let mut args = vec!["list"];
             args.extend(options.iter().copied());
             let result = run(directory, &args);
@@ -413,6 +430,20 @@ fn recursive_legacy_names_remain_complete_and_never_visit_paths_named_by_records
     for name in names {
         assert!(text.contains(&format!("child\\{name}\n    body\n\n")));
     }
+    let tree = run(directory.path(), &["list", "--tree"]);
+    success(&tree);
+    let text = String::from_utf8(tree.stdout).unwrap();
+    assert!(text.starts_with("└── child\\\n"));
+    assert_eq!(text.lines().count(), names.len() + 1);
+    for name in names {
+        assert!(text.contains(&format!("── {name}  body\n")));
+    }
+    let tree_json = run(directory.path(), &["list", "--tree", "--json"]);
+    success(&tree_json);
+    assert_eq!(
+        tree_json.stdout,
+        run(directory.path(), &["list", "-r", "--json"]).stdout
+    );
     assert_eq!(
         fs::read(directory.path().join("child/descript.ion")).unwrap(),
         bytes.as_bytes()

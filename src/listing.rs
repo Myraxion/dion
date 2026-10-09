@@ -59,16 +59,111 @@ pub fn long(output: &mut impl Write, entries: &[Entry]) -> io::Result<()> {
 /// Collects all records before rendering, so a later read failure emits no stdout.
 pub fn collect(directory: &Path, recursive: bool) -> Result<Vec<Entry>, Error> {
     let mut entries = Vec::new();
-    collect_directory(directory, "", recursive, &mut entries)?;
+    collect_directory(directory, recursive)?.flatten("", &mut entries);
     Ok(entries)
 }
 
-fn collect_directory(
-    directory: &Path,
-    prefix: &str,
-    recursive: bool,
-    output: &mut Vec<Entry>,
-) -> Result<(), Error> {
+struct Directory {
+    entries: Vec<Entry>,
+    children: Vec<(String, Directory)>,
+}
+
+impl Directory {
+    fn flatten(self, prefix: &str, output: &mut Vec<Entry>) {
+        for mut entry in self.entries {
+            // Append the complete legacy name as text, never as path components.
+            entry.name.insert_str(0, prefix);
+            output.push(entry);
+        }
+        for (name, child) in self.children {
+            child.flatten(&format!("{prefix}{name}\\"), output);
+        }
+    }
+
+    fn into_tree(self) -> Vec<TreeNode> {
+        let mut nodes: Vec<_> = self
+            .entries
+            .into_iter()
+            .map(|entry| TreeNode {
+                name: entry.name,
+                name_utf16: entry.name_utf16,
+                directory: entry.directory,
+                comment: Some(entry.comment),
+                children: Vec::new(),
+            })
+            .collect();
+        for (name, child) in self.children {
+            let children = child.into_tree();
+            if children.is_empty() {
+                continue;
+            }
+            let key = name.to_lowercase();
+            if let Some(node) = nodes
+                .iter_mut()
+                .find(|node| node.directory && node.name.to_lowercase() == key)
+            {
+                node.children = children;
+            } else {
+                nodes.push(TreeNode {
+                    name_utf16: name.encode_utf16().chain(Some(0)).collect(),
+                    name,
+                    directory: true,
+                    comment: None,
+                    children,
+                });
+            }
+        }
+        nodes.sort_by(|a, b| {
+            b.directory
+                .cmp(&a.directory)
+                .then_with(|| compare_names(&a.name_utf16, &b.name_utf16))
+        });
+        nodes
+    }
+}
+
+pub struct TreeNode {
+    name: String,
+    name_utf16: Vec<u16>,
+    directory: bool,
+    comment: Option<String>,
+    children: Vec<TreeNode>,
+}
+
+/// Uses the same traversal and failure boundary as the ordinary recursive list.
+pub fn collect_tree(directory: &Path) -> Result<Vec<TreeNode>, Error> {
+    Ok(collect_directory(directory, true)?.into_tree())
+}
+
+pub fn tree(output: &mut impl Write, nodes: &[TreeNode]) -> io::Result<()> {
+    render_tree(output, nodes, "")
+}
+
+fn render_tree(output: &mut impl Write, nodes: &[TreeNode], prefix: &str) -> io::Result<()> {
+    for (index, node) in nodes.iter().enumerate() {
+        let last = index + 1 == nodes.len();
+        let branch = if last { "└── " } else { "├── " };
+        let continuation = if last { "    " } else { "│   " };
+        let marker = if node.directory { "\\" } else { "" };
+        write!(output, "{prefix}{branch}{}{marker}", node.name)?;
+        if let Some(comment) = &node.comment {
+            let padding = " ".repeat(node.name.width() + marker.len() + 2);
+            for (index, line) in comment.split('\n').enumerate() {
+                if index == 0 {
+                    writeln!(output, "  {line}")?;
+                } else {
+                    writeln!(output, "{prefix}{continuation}{padding}{line}")?;
+                }
+            }
+        } else {
+            writeln!(output)?;
+        }
+        render_tree(output, &node.children, &format!("{prefix}{continuation}"))?;
+    }
+    Ok(())
+}
+
+fn collect_directory(directory: &Path, recursive: bool) -> Result<Directory, Error> {
     let file = directory.join("descript.ion");
     let bytes = storage::read(&file)?;
     let records = match &bytes {
@@ -76,7 +171,10 @@ fn collect_directory(
         None => Vec::new(),
     };
     if records.is_empty() && !recursive {
-        return Ok(());
+        return Ok(Directory {
+            entries: Vec::new(),
+            children: Vec::new(),
+        });
     }
     let mut directories = HashSet::new();
     let mut children = Vec::new();
@@ -126,19 +224,21 @@ fn collect_directory(
     entries.sort_by(|a, b| {
         b.directory
             .cmp(&a.directory)
-            .then_with(|| natural_cmp(&a.name_utf16, &b.name_utf16))
-            .then_with(|| a.name_utf16.cmp(&b.name_utf16))
+            .then_with(|| compare_names(&a.name_utf16, &b.name_utf16))
     });
-    for mut entry in entries {
-        // Append the complete legacy name as text, never as path components.
-        entry.name.insert_str(0, prefix);
-        output.push(entry);
-    }
-    children.sort_by(|a, b| natural_cmp(&a.1, &b.1).then_with(|| a.1.cmp(&b.1)));
+    children.sort_by(|a, b| compare_names(&a.1, &b.1));
+    let mut subdirectories = Vec::new();
     for (name, _, path) in children {
-        collect_directory(&path, &format!("{prefix}{name}\\"), true, output)?;
+        subdirectories.push((name, collect_directory(&path, true)?));
     }
-    Ok(())
+    Ok(Directory {
+        entries,
+        children: subdirectories,
+    })
+}
+
+fn compare_names(a: &[u16], b: &[u16]) -> Ordering {
+    natural_cmp(a, b).then_with(|| a.cmp(b))
 }
 
 #[cfg(windows)]

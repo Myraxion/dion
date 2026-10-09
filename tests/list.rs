@@ -13,6 +13,176 @@ fn list(directory: &Path, args: &[&str]) -> Output {
 }
 
 #[test]
+fn tree_merges_directory_comments_and_prunes_unrelated_nodes_in_natural_order() {
+    let directory = tempfile::tempdir().unwrap();
+    for path in [
+        "dir2/middle/deep",
+        "dir2/unused",
+        "dir10",
+        "irrelevant/nested",
+    ] {
+        fs::create_dir_all(directory.path().join(path)).unwrap();
+    }
+    fs::write(directory.path().join("unrelated.txt"), b"").unwrap();
+    let fixtures = [
+        (
+            "descript.ion",
+            "\u{feff}file10 ten\r\nDIR2  first\\n\\n tail \\n\\n\u{4}\u{c2}\r\nfile2 two\r\nempty ",
+        ),
+        ("dir2/descript.ion", "\u{feff}orphan missing"),
+        (
+            "dir2/middle/deep/descript.ion",
+            "\u{feff}lost literal\\n\u{4}foreign",
+        ),
+        ("dir10/descript.ion", "\u{feff}file last"),
+    ];
+    for (path, bytes) in fixtures {
+        fs::write(directory.path().join(path), bytes).unwrap();
+    }
+    for options in [
+        vec!["--tree"],
+        vec!["--tree", "-r"],
+        vec!["--recursive", "--tree"],
+    ] {
+        let mut args = vec!["list"];
+        args.extend(options);
+        let result = list(directory.path(), &args);
+        assert_eq!(result.status.code(), Some(0), "{:?}", result.stderr);
+        assert!(result.stderr.is_empty());
+        assert_eq!(
+            result.stdout,
+            concat!(
+                "├── DIR2\\   first\n",
+                "│          \n",
+                "│           tail \n",
+                "│          \n",
+                "│          \n",
+                "│   ├── middle\\\n",
+                "│   │   └── deep\\\n",
+                "│   │       └── lost  literal\\n\n",
+                "│   └── orphan  missing\n",
+                "├── dir10\\\n",
+                "│   └── file  last\n",
+                "├── empty  \n",
+                "├── file2  two\n",
+                "└── file10  ten\n",
+            )
+            .as_bytes()
+        );
+    }
+    for (path, bytes) in fixtures {
+        assert_eq!(
+            fs::read(directory.path().join(path)).unwrap(),
+            bytes.as_bytes()
+        );
+    }
+}
+
+#[test]
+fn tree_json_is_the_ordinary_recursive_list_without_supporting_nodes() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::create_dir_all(directory.path().join("child/middle/deep")).unwrap();
+    fs::write(
+        directory.path().join("descript.ion"),
+        "\u{feff}CHILD own\r\nz parent",
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("child/middle/deep/descript.ion"),
+        "\u{feff}empty \r\nother unknown\\n\u{4}foreign",
+    )
+    .unwrap();
+    let recursive = list(directory.path(), &["list", "-r", "--json"]);
+    assert_eq!(recursive.status.code(), Some(0));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&recursive.stdout).unwrap(),
+        serde_json::json!({"entries": [
+            {"name":"CHILD", "comment":"own", "extension":"none"},
+            {"name":"z", "comment":"parent", "extension":"none"},
+            {"name":"child\\middle\\deep\\empty", "comment":"", "extension":"none"},
+            {"name":"child\\middle\\deep\\other", "comment":"unknown\\n", "extension":"unknown"},
+        ]})
+    );
+    for options in [vec!["--tree"], vec!["--tree", "-r"]] {
+        let mut args = vec!["--json", "list"];
+        args.extend(options);
+        let result = list(directory.path(), &args);
+        assert_eq!(result.status.code(), Some(0));
+        assert!(result.stderr.is_empty());
+        assert_eq!(result.stdout, recursive.stdout);
+    }
+}
+
+#[test]
+fn tree_aligns_wide_names_under_last_branches_without_wrapping() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::create_dir(directory.path().join("中😀")).unwrap();
+    fs::write(
+        directory.path().join("descript.ion"),
+        "\u{feff}中😀 dir\\nend\u{4}\u{c2}",
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("中😀/descript.ion"),
+        format!("\u{feff}Ａ  first\t\\n\\n{}\\n\u{4}\u{c2}", "x".repeat(300)),
+    )
+    .unwrap();
+    let result = list(directory.path(), &["list", "--tree"]);
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8(result.stdout).unwrap(),
+        format!(
+            "└── 中😀\\  dir\n           end\n    └── Ａ   first\t\n            \n            {}\n            \n",
+            "x".repeat(300)
+        )
+    );
+}
+
+#[test]
+fn tree_and_long_are_mutually_exclusive_in_text_and_json() {
+    let directory = tempfile::tempdir().unwrap();
+    for options in [
+        vec!["--tree", "--long"],
+        vec!["-l", "--tree"],
+        vec!["--tree", "-r", "-l"],
+    ] {
+        for json in [false, true] {
+            let mut args = vec!["list"];
+            args.extend(options.iter().copied());
+            if json {
+                args.push("--json");
+            }
+            let result = list(directory.path(), &args);
+            assert_eq!(result.status.code(), Some(2));
+            assert!(result.stdout.is_empty());
+            if json {
+                assert_eq!(
+                    serde_json::from_slice::<serde_json::Value>(&result.stderr).unwrap()["error"]["code"],
+                    "invalid_argument"
+                );
+            } else {
+                assert!(
+                    String::from_utf8(result.stderr)
+                        .unwrap()
+                        .contains("invalid_argument")
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn tree_without_any_records_emits_nothing_even_with_unrelated_directories() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::create_dir_all(directory.path().join("child/deep")).unwrap();
+    fs::write(directory.path().join("child/descript.ion"), "\u{feff}\r\n").unwrap();
+    let result = list(directory.path(), &["list", "--tree"]);
+    assert_eq!(result.status.code(), Some(0));
+    assert!(result.stdout.is_empty());
+    assert!(result.stderr.is_empty());
+}
+
+#[test]
 fn recursive_list_emits_parent_records_then_naturally_ordered_subtrees_in_all_modes() {
     let directory = tempfile::tempdir().unwrap();
     fs::create_dir_all(directory.path().join("dir2/middle/deep")).unwrap();
@@ -146,7 +316,14 @@ fn later_recursive_description_errors_leave_stdout_empty_in_every_mode() {
         ),
     ] {
         fs::write(&file, bytes).unwrap();
-        for options in [vec![], vec!["-l"], vec!["--json"], vec!["-l", "--json"]] {
+        for options in [
+            vec![],
+            vec!["-l"],
+            vec!["--json"],
+            vec!["-l", "--json"],
+            vec!["--tree"],
+            vec!["--tree", "--json"],
+        ] {
             let mut args = vec!["list", "-r"];
             args.extend(options);
             let result = list(directory.path(), &args);
@@ -191,6 +368,8 @@ fn a_later_inaccessible_directory_fails_even_without_a_description_file() {
         vec!["list", "-r"],
         vec!["list", "-r", "-l"],
         vec!["list", "-r", "--json"],
+        vec!["list", "--tree"],
+        vec!["list", "--tree", "--json"],
     ]
     .iter()
     .map(|args| list(directory.path(), args))
@@ -393,6 +572,8 @@ fn all_list_modes_preserve_bytes_times_attributes_and_directory_contents() {
         vec!["list", "-r"],
         vec!["list", "-r", "--long"],
         vec!["list", "-r", "--json"],
+        vec!["list", "--tree"],
+        vec!["list", "--tree", "--json"],
     ] {
         let result = list(directory.path(), &args);
         assert_eq!(result.status.code(), Some(0));
@@ -503,6 +684,8 @@ fn late_bad_records_fail_the_whole_list_in_text_and_json() {
             vec!["list", "--long"],
             vec!["list", "--json"],
             vec!["list", "-l", "--json"],
+            vec!["list", "--tree"],
+            vec!["list", "--tree", "--json"],
         ] {
             let result = list(directory.path(), &args);
             assert_eq!(result.status.code(), Some(1));
@@ -558,6 +741,10 @@ fn list_rejects_extra_arguments_and_options_and_supports_directory_after_separat
         vec!["get", "a", "-r", "--json"],
         vec!["set", "a", "body", "--recursive", "--json"],
         vec!["remove", "a", "-r", "--json"],
+        vec!["list", "--tree", "--tree", "--json"],
+        vec!["get", "a", "--tree", "--json"],
+        vec!["set", "a", "body", "--tree", "--json"],
+        vec!["remove", "a", "--tree", "--json"],
     ] {
         let result = list(directory.path(), &args);
         assert_eq!(result.status.code(), Some(2));

@@ -44,6 +44,7 @@ struct Arguments {
     source: Option<CommentSource>,
     long: bool,
     recursive: bool,
+    tree: bool,
 }
 
 fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
@@ -53,6 +54,7 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
     let mut source = None;
     let mut long = false;
     let mut recursive = false;
+    let mut tree = false;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         if after_separator {
@@ -65,6 +67,8 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
             long = true;
         } else if (arg == "--recursive" || arg == "-r") && !recursive {
             recursive = true;
+        } else if arg == "--tree" && !tree {
+            tree = true;
         } else if (arg == "--stdin" || arg == "--comment-file") && source.is_none() {
             source = Some(if arg == "--stdin" {
                 CommentSource::Stdin
@@ -86,37 +90,49 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
             positional.push(arg.clone());
         }
     }
+    if tree && long {
+        return Err(Error::new(
+            "invalid_argument",
+            "--tree and --long are mutually exclusive",
+            2,
+        ));
+    }
     Ok(Arguments {
         positional,
         source,
         long,
         recursive,
+        tree,
     })
 }
 
 fn execute(arguments: &Arguments, json: bool) -> Result<(), Error> {
     let args = &arguments.positional;
-    if (arguments.long || arguments.recursive)
+    if (arguments.long || arguments.recursive || arguments.tree)
         && args.first().is_none_or(|command| command != "list")
     {
         return Err(Error::new(
             "invalid_argument",
-            "--long and --recursive are only supported by list",
+            "--long, --recursive and --tree are only supported by list",
             2,
         ));
     }
     match args.first().and_then(|arg| arg.to_str()) {
         Some("get") if args.len() == 2 && arguments.source.is_none() => get(args, json),
         Some("remove") if args.len() == 2 && arguments.source.is_none() => remove(args, json),
-        Some("list") if args.len() <= 2 && arguments.source.is_none() => {
-            list(args, json, arguments.long, arguments.recursive)
-        }
+        Some("list") if args.len() <= 2 && arguments.source.is_none() => list(
+            args,
+            json,
+            arguments.long,
+            arguments.recursive,
+            arguments.tree,
+        ),
         Some("set") if args.len() == if arguments.source.is_some() { 2 } else { 3 } => {
             set(args, arguments.source.as_ref(), json)
         }
         _ => Err(Error::new(
             "invalid_argument",
-            "Usage: dion [--json] get <path> | remove <path> | list [directory] [--long|-l] [--recursive|-r] | set <path> (<comment> | --stdin | --comment-file <file>)",
+            "Usage: dion [--json] get <path> | remove <path> | list [directory] [--long|-l|--tree] [--recursive|-r] | set <path> (<comment> | --stdin | --comment-file <file>)",
             2,
         )),
     }
@@ -223,12 +239,23 @@ fn read_comment(source: &CommentSource) -> Result<String, Error> {
     })
 }
 
-fn list(args: &[OsString], json: bool, long: bool, recursive: bool) -> Result<(), Error> {
+fn list(
+    args: &[OsString],
+    json: bool,
+    long: bool,
+    recursive: bool,
+    tree: bool,
+) -> Result<(), Error> {
     let directory = normalize_verbatim_path(
         args.get(1)
             .map_or_else(|| PathBuf::from("."), PathBuf::from),
     );
-    let entries = listing::collect(&directory, recursive)?;
+    if tree && !json {
+        let nodes = listing::collect_tree(&directory)?;
+        return listing::tree(&mut io::stdout().lock(), &nodes)
+            .map_err(|error| Error::new("io_error", error.to_string(), 1));
+    }
+    let entries = listing::collect(&directory, recursive || tree)?;
     let mut output = io::stdout().lock();
     let result = if json {
         write_json(&mut output, &serde_json::json!({ "entries": entries }))
