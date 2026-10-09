@@ -1,4 +1,4 @@
-use crate::{comment, editor, error::Error, listing, storage};
+use crate::{comment, editor, error::Error, help, listing, storage};
 use std::{
     env,
     ffi::OsString,
@@ -46,6 +46,7 @@ struct Arguments {
     long: bool,
     recursive: bool,
     tree: bool,
+    help: bool,
 }
 
 fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
@@ -56,6 +57,7 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
     let mut long = false;
     let mut recursive = false;
     let mut tree = false;
+    let mut help = false;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         if after_separator {
@@ -64,6 +66,8 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
             after_separator = true;
         } else if arg == "--json" && !json_seen {
             json_seen = true;
+        } else if (arg == "--help" || arg == "-h") && !help {
+            help = true;
         } else if (arg == "--long" || arg == "-l") && !long {
             long = true;
         } else if (arg == "--recursive" || arg == "-r") && !recursive {
@@ -108,11 +112,35 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
         long,
         recursive,
         tree,
+        help,
     })
 }
 
 fn execute(arguments: &Arguments, json: bool) -> Result<(), Error> {
     let args = &arguments.positional;
+    if arguments.help || args.first().is_some_and(|arg| arg == "help") {
+        let topic = if args.first().is_some_and(|arg| arg == "help") {
+            if args.len() > 2 {
+                return Err(Error::new(
+                    "invalid_argument",
+                    "Usage: dion help [command]",
+                    2,
+                ));
+            }
+            args.get(1)
+        } else {
+            args.first()
+        };
+        let text = match topic {
+            None => Some(help::OVERVIEW),
+            Some(topic) => topic.to_str().and_then(help::command),
+        }
+        .ok_or_else(|| Error::new("invalid_argument", "Unknown help command", 2))?;
+        return io::stdout()
+            .lock()
+            .write_all(text.as_bytes())
+            .map_err(|error| Error::new("io_error", error.to_string(), 1));
+    }
     if (arguments.long || arguments.recursive || arguments.tree)
         && args.first().is_none_or(|command| command != "list")
     {

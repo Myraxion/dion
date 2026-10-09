@@ -15,6 +15,16 @@ Dion 是一个 Windows 原生命令行工具，用于查看、列出、设置和
 
 ## 快速上手
 
+通过 `dion --help`、`dion -h` 或 `dion help` 查看中文总览；四个命令均支持 `dion <command> --help`、`dion <command> -h` 和 `dion help <command>`，无需提供路径或正文。例如：
+
+```powershell
+.\dion.exe --help
+.\dion.exe list -h
+.\dion.exe help set
+```
+
+帮助包含用途、参数、默认行为与常用 PowerShell 示例，写入 stdout 并返回退出码 0；带 `--json` 时仍显示文本。帮助不查询或修改备注，也不启动编辑器。`--` 后的 `--help`、`-h` 作为路径或正文处理。
+
 将 `dion.exe` 放在当前目录，在 PowerShell 中运行。下面假设 `报告.txt` 和 `资料` 文件夹已存在：
 
 ```powershell
