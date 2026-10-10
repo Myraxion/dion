@@ -19,8 +19,6 @@ Language / 语言： [English](README.en.md) | 简体中文
 
 ## 快速上手
 
-程序文案支持简体中文和英文。使用 `--lang zh-CN`、`--lang en` 或 `--lang auto` 临时选择语言，也可设置 `DION_LANG`；未指定时跟随 Windows 用户界面语言，不支持的语言使用英文。
-
 ### 命令用法
 
 ```

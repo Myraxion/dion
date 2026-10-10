@@ -122,6 +122,7 @@ fn overview_routes_show_chinese_usage_options_and_key_defaults() {
         vec!["help", "--json"],
     ] {
         let text = help(directory.path(), &args);
+        assert!(!text.contains("--lang"));
         for expected in [
             "用途",
             "用法",
@@ -149,6 +150,19 @@ fn overview_routes_show_chinese_usage_options_and_key_defaults() {
             .next()
             .is_none()
     );
+}
+
+#[test]
+fn english_overview_does_not_expose_language_selection() {
+    let directory = tempfile::tempdir().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_dion"))
+        .current_dir(directory.path())
+        .args(["--help"])
+        .env("DION_LANG", "en")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(!String::from_utf8(output.stdout).unwrap().contains("--lang"));
 }
 
 #[test]

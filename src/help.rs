@@ -20,7 +20,6 @@ pub const OVERVIEW: &str = r#"Dion — 文件与文件夹备注
 括号内为命令别名；help <别名> 和 <别名> -h 显示对应命令帮助。
 
 全局参数：
-  --lang <en|zh-CN|auto>  设置程序文案语言
   --json, -j  输出 JSON；帮助仍为文本
   --help, -h  显示帮助
   --          结束选项解析，以 - 开头的路径或正文放在其后
@@ -48,7 +47,6 @@ Commands:
 Names in parentheses are aliases. Use help <alias> or <alias> -h for command help.
 
 Global options:
-  --lang <en|zh-CN|auto>  Select the language for program messages
   --json, -j              Output JSON; help remains plain text
   --help, -h              Show help
   --                      End option parsing; put paths or comments starting with - after it
