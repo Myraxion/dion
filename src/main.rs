@@ -6,6 +6,7 @@ mod help;
 mod listing;
 mod name;
 mod storage;
+mod terminal;
 
 use std::process::ExitCode;
 

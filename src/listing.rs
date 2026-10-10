@@ -19,7 +19,7 @@ pub struct Entry {
     name_utf16: Vec<u16>,
 }
 
-pub fn columns(output: &mut impl Write, entries: &[Entry]) -> io::Result<()> {
+pub fn columns(output: &mut impl Write, entries: &[Entry], color: bool) -> io::Result<()> {
     let width = entries
         .iter()
         .map(|entry| entry.name.width() + usize::from(entry.directory))
@@ -31,7 +31,8 @@ pub fn columns(output: &mut impl Write, entries: &[Entry]) -> io::Result<()> {
         let padding = " ".repeat(width - name.width() - marker.len() + 2);
         for (index, line) in entry.comment.split('\n').enumerate() {
             if index == 0 {
-                writeln!(output, "{name}{marker}{padding}{line}")?;
+                write_name(output, name, marker, color)?;
+                writeln!(output, "{padding}{line}")?;
             } else {
                 writeln!(output, "{}{line}", " ".repeat(width + 2))?;
             }
@@ -40,14 +41,15 @@ pub fn columns(output: &mut impl Write, entries: &[Entry]) -> io::Result<()> {
     Ok(())
 }
 
-pub fn long(output: &mut impl Write, entries: &[Entry]) -> io::Result<()> {
+pub fn long(output: &mut impl Write, entries: &[Entry], color: bool) -> io::Result<()> {
     for entry in entries {
-        writeln!(
+        write_name(
             output,
-            "{}{}",
-            entry.name,
-            if entry.directory { "\\" } else { "" }
+            &entry.name,
+            if entry.directory { "\\" } else { "" },
+            color,
         )?;
+        writeln!(output)?;
         for line in entry.comment.split('\n') {
             writeln!(output, "    {line}")?;
         }
@@ -138,17 +140,23 @@ pub fn collect_tree(directory: &Path) -> Result<(Vec<TreeNode>, Vec<Error>), Err
     Ok((nodes, errors))
 }
 
-pub fn tree(output: &mut impl Write, nodes: &[TreeNode]) -> io::Result<()> {
-    render_tree(output, nodes, "")
+pub fn tree(output: &mut impl Write, nodes: &[TreeNode], color: bool) -> io::Result<()> {
+    render_tree(output, nodes, "", color)
 }
 
-fn render_tree(output: &mut impl Write, nodes: &[TreeNode], prefix: &str) -> io::Result<()> {
+fn render_tree(
+    output: &mut impl Write,
+    nodes: &[TreeNode],
+    prefix: &str,
+    color: bool,
+) -> io::Result<()> {
     for (index, node) in nodes.iter().enumerate() {
         let last = index + 1 == nodes.len();
         let branch = if last { "└── " } else { "├── " };
         let continuation = if last { "    " } else { "│   " };
         let marker = if node.directory { "\\" } else { "" };
-        write!(output, "{prefix}{branch}{}{marker}", node.name)?;
+        write!(output, "{prefix}{branch}")?;
+        write_name(output, &node.name, marker, color)?;
         if let Some(comment) = &node.comment {
             let padding = " ".repeat(node.name.width() + marker.len() + 2);
             for (index, line) in comment.split('\n').enumerate() {
@@ -161,9 +169,22 @@ fn render_tree(output: &mut impl Write, nodes: &[TreeNode], prefix: &str) -> io:
         } else {
             writeln!(output)?;
         }
-        render_tree(output, &node.children, &format!("{prefix}{continuation}"))?;
+        render_tree(
+            output,
+            &node.children,
+            &format!("{prefix}{continuation}"),
+            color,
+        )?;
     }
     Ok(())
+}
+
+fn write_name(output: &mut impl Write, name: &str, marker: &str, color: bool) -> io::Result<()> {
+    if color {
+        write!(output, "\x1b[36m{name}{marker}\x1b[39m")
+    } else {
+        write!(output, "{name}{marker}")
+    }
 }
 
 fn collect_directory(

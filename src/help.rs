@@ -4,7 +4,7 @@ pub const OVERVIEW: &str = r#"Dion — 文件与文件夹备注
 
 用法：
   dion get <path>
-  dion list [directory] [--long|-l|--tree|-t] [--recursive|-r]
+  dion list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--color auto|always|never]
   dion set <path> (<comment> | --stdin|-i | --comment-file|-f <file> | --edit|-e)
   dion remove <path>
   dion help [command]
@@ -51,7 +51,7 @@ const GET: &str = r#"用途：查看文件或文件夹条目自身的备注，�
 
 const LIST: &str = r#"用途：列出目录内部条目的备注，包括孤立记录。
 
-用法：dion list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--json|-j]
+用法：dion list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--color auto|always|never] [--json|-j]
 别名：ls
 
 参数与默认行为：
@@ -59,10 +59,13 @@ const LIST: &str = r#"用途：列出目录内部条目的备注，包括孤立�
   --long, -l       单栏展示
   --recursive, -r  递归查询子目录，名称相对于起始目录
   --tree, -t       树状展示，自动递归，与 --long 互斥
+  --color <mode>   名称颜色：auto（默认）、always 或 never
   --json, -j       输出 JSON；树模式输出普通递归 JSON
   --help, -h       显示帮助
 
 默认只查询当前层，双栏展示完整正文，目录优先、名称自然排序。
+auto 仅在支持颜色的终端启用；非空 NO_COLOR 可关闭默认颜色，always 可覆盖。
+JSON 输出始终不添加颜色。
 递归不进入途中遇到的目录符号链接或 Junction；显式指定为起始目录时读取内部。
 默认跳过坏记录和读取错误，继续查询；文本底部汇总错误，JSON 返回 entries 和 errors。
 有跳过的错误时退出码为 1；起始目录无法访问时直接失败。

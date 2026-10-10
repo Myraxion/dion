@@ -6,7 +6,7 @@ Dion 是一个 Windows 原生命令行工具，用于查看、列出、设置和
 
 - **单文件运行**：适用于 Windows 10/11 x64，无需安装 Rust 或额外运行库；实测 exe 约 346.5 KiB。
 - **四个基础命令**：查看单条备注、列出目录备注、设置或覆盖备注、显式删除备注。
-- **列表展示**：目录优先、名称自然排序，默认双栏对齐，`--long`（`-l`）单栏展示完整正文，`--recursive`（`-r`）汇总子目录备注，`--tree` 按目录层级展开。
+- **列表展示**：目录优先、名称自然排序，默认双栏对齐，支持 `--long`（`-l`）、`--recursive`（`-r`）、`--tree` 及名称自动着色。
 - **Unicode 与多行**：支持中文、Emoji、含空格的名称和多行正文，保留缩进、首尾空白和空行。
 - **局部修改**：保留其他记录的原始字节与顺序；设置相同内容时不写文件。
 - **正文输入**：支持正文参数、stdin、UTF-8 文本文件及 `set --edit` 外部编辑；沿用 JSON 输出和稳定退出码。
@@ -23,7 +23,7 @@ Dion 是一个 Windows 原生命令行工具，用于查看、列出、设置和
 dion help [command]
 dion [--json|-j] get <path>
 dion [--json|-j] set <path> (<comment> | --comment-file|-f <file> | --stdin|-i | --edit|-e)
-dion [--json|-j] list [directory] [--long|-l | --tree|-t] [--recursive|-r]
+dion [--json|-j] list [directory] [--long|-l | --tree|-t] [--recursive|-r] [--color auto|always|never]
 dion [--json|-j] remove <path>
 ```
 
@@ -61,6 +61,7 @@ dion unset file.txt -j
   - `--long`（`-l`）：单栏详细展示，完整呈现多行正文。
   - `--recursive`（`-r`）：递归汇总子目录的备注。
   - `--tree`：树状层级展开展示（自动递归；与 `--long` 互斥）。
+  - `--color auto|always|never`：默认仅在支持颜色的终端为名称着色；可强制开启或关闭，JSON 始终无颜色。
   - 默认跳过坏记录或无法读取的备注文件，继续查询；无法枚举的子目录整体跳过，起始目录无法访问时直接失败。
   - 文本底部汇总跳过的错误；JSON 返回 `entries` 和 `errors` 数组，无错误时 `errors:[]`。有跳过错误时仍输出有效记录，退出码为 `1`。
 - **`remove`**：显式删除条目自身的备注。目标条目本身不受影响；若目录内备注全部清空，自动清理备注文件。

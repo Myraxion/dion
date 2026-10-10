@@ -169,6 +169,8 @@ fn every_command_has_three_help_routes_without_required_operands() {
                 "--recursive",
                 "-r",
                 "--tree",
+                "--color",
+                "always",
                 "自动递归",
                 "互斥",
                 "目录优先",

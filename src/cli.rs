@@ -1,8 +1,8 @@
-use crate::{comment, editor, error::Error, help, listing, name::Name, storage};
+use crate::{comment, editor, error::Error, help, listing, name::Name, storage, terminal};
 use std::{
     env,
     ffi::OsString,
-    io::{self, Read, Write},
+    io::{self, IsTerminal, Read, Write},
     path::PathBuf,
     process::ExitCode,
 };
@@ -33,6 +33,13 @@ enum CommentSource {
     Edit,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ColorMode {
+    Auto,
+    Always,
+    Never,
+}
+
 struct Arguments {
     positional: Vec<OsString>,
     source: Option<CommentSource>,
@@ -40,6 +47,7 @@ struct Arguments {
     recursive: bool,
     tree: bool,
     help: bool,
+    color: Option<ColorMode>,
 }
 
 fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
@@ -51,6 +59,7 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
     let mut recursive = false;
     let mut tree = false;
     let mut help = false;
+    let mut color = None;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         if after_separator {
@@ -67,6 +76,29 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
             recursive = true;
         } else if (arg == "--tree" || arg == "-t") && !tree {
             tree = true;
+        } else if arg == "--color" && color.is_none() {
+            let value = args
+                .next()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| {
+                    Error::new(
+                        "invalid_argument",
+                        "--color requires auto, always or never",
+                        2,
+                    )
+                })?;
+            color = Some(match value {
+                "auto" => ColorMode::Auto,
+                "always" => ColorMode::Always,
+                "never" => ColorMode::Never,
+                _ => {
+                    return Err(Error::new(
+                        "invalid_argument",
+                        "--color requires auto, always or never",
+                        2,
+                    ));
+                }
+            });
         } else if (arg == "--stdin"
             || arg == "-i"
             || arg == "--comment-file"
@@ -111,6 +143,7 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
         recursive,
         tree,
         help,
+        color,
     })
 }
 
@@ -141,10 +174,12 @@ fn execute(arguments: &Arguments, json: bool) -> Result<u8, Error> {
             .map(|()| 0)
             .map_err(|error| Error::new("io_error", error.to_string(), 1));
     }
-    if (arguments.long || arguments.recursive || arguments.tree) && command != Some("list") {
+    if (arguments.long || arguments.recursive || arguments.tree || arguments.color.is_some())
+        && command != Some("list")
+    {
         return Err(Error::new(
             "invalid_argument",
-            "--long, --recursive and --tree are only supported by list",
+            "--long, --recursive, --tree and --color are only supported by list",
             2,
         ));
     }
@@ -159,13 +194,14 @@ fn execute(arguments: &Arguments, json: bool) -> Result<u8, Error> {
             arguments.long,
             arguments.recursive,
             arguments.tree,
+            arguments.color.unwrap_or(ColorMode::Auto),
         ),
         Some("set") if args.len() == if arguments.source.is_some() { 2 } else { 3 } => {
             set(args, arguments.source.as_ref(), json).map(|()| 0)
         }
         _ => Err(Error::new(
             "invalid_argument",
-            "Usage: dion [--json|-j] get <path> | remove <path> | list [directory] [--long|-l|--tree|-t] [--recursive|-r] | set <path> (<comment> | --stdin|-i | --comment-file|-f <file> | --edit|-e); use dion help for command aliases",
+            "Usage: dion [--json|-j] get <path> | remove <path> | list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--color auto|always|never] | set <path> (<comment> | --stdin|-i | --comment-file|-f <file> | --edit|-e); use dion help for command aliases",
             2,
         )),
     }
@@ -369,6 +405,7 @@ fn list(
     long: bool,
     recursive: bool,
     tree: bool,
+    color_mode: ColorMode,
 ) -> Result<u8, Error> {
     let directory = normalize_verbatim_path(
         args.get(1)
@@ -376,12 +413,14 @@ fn list(
     );
     if tree && !json {
         let (nodes, errors) = listing::collect_tree(&directory)?;
+        let (use_color, _console_mode) = prepare_color(color_mode, json);
         let mut output = io::stdout().lock();
-        listing::tree(&mut output, &nodes)
+        listing::tree(&mut output, &nodes, use_color)
             .map_err(|error| Error::new("io_error", error.to_string(), 1))?;
         return finish_list(&mut output, &errors, !nodes.is_empty());
     }
     let (entries, errors) = listing::collect(&directory, recursive || tree)?;
+    let (use_color, _console_mode) = prepare_color(color_mode, json);
     let mut output = io::stdout().lock();
     let result = if json {
         write_json(
@@ -389,9 +428,9 @@ fn list(
             &serde_json::json!({ "entries": entries, "errors": errors }),
         )
     } else if long {
-        listing::long(&mut output, &entries)
+        listing::long(&mut output, &entries, use_color)
     } else {
-        listing::columns(&mut output, &entries)
+        listing::columns(&mut output, &entries, use_color)
     };
     result.map_err(|error| Error::new("io_error", error.to_string(), 1))?;
     if json {
@@ -399,6 +438,23 @@ fn list(
     } else {
         finish_list(&mut output, &errors, !entries.is_empty())
     }
+}
+
+fn prepare_color(color_mode: ColorMode, json: bool) -> (bool, Option<terminal::ConsoleModeGuard>) {
+    if json || color_mode == ColorMode::Never {
+        return (false, None);
+    }
+    if color_mode == ColorMode::Auto
+        && (env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty())
+            || !io::stdout().is_terminal())
+    {
+        return (false, None);
+    }
+    let console_mode = terminal::enable_virtual_terminal_processing();
+    (
+        color_mode == ColorMode::Always || console_mode.is_some(),
+        console_mode,
+    )
 }
 
 fn finish_list(output: &mut impl Write, errors: &[Error], has_entries: bool) -> Result<u8, Error> {

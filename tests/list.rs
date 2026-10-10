@@ -8,8 +8,110 @@ fn list(directory: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_dion"))
         .current_dir(directory)
         .args(args)
+        .env_remove("NO_COLOR")
         .output()
         .unwrap()
+}
+
+fn list_with_no_color(directory: &Path, args: &[&str], value: &str) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_dion"))
+        .current_dir(directory)
+        .args(args)
+        .env("NO_COLOR", value)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn color_always_styles_names_in_every_text_layout_but_not_json() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::create_dir(directory.path().join("folder")).unwrap();
+    fs::write(
+        directory.path().join("descript.ion"),
+        "\u{feff}file note\r\nfolder directory note",
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("folder/descript.ion"),
+        "\u{feff}nested child note",
+    )
+    .unwrap();
+
+    for (options, expected) in [
+        (
+            vec!["--color", "always"],
+            "\u{1b}[36mfolder\\\u{1b}[39m  directory note\n\u{1b}[36mfile\u{1b}[39m     note\n",
+        ),
+        (
+            vec!["--color", "always", "--long"],
+            "\u{1b}[36mfolder\\\u{1b}[39m\n    directory note\n\n\u{1b}[36mfile\u{1b}[39m\n    note\n\n",
+        ),
+        (
+            vec!["--color", "always", "--tree"],
+            "├── \u{1b}[36mfolder\\\u{1b}[39m  directory note\n│   └── \u{1b}[36mnested\u{1b}[39m  child note\n└── \u{1b}[36mfile\u{1b}[39m  note\n",
+        ),
+    ] {
+        let mut args = vec!["list"];
+        args.extend(options);
+        let result = list(directory.path(), &args);
+        assert_eq!(
+            result.status.code(),
+            Some(0),
+            "{args:?}: {:?}",
+            result.stderr
+        );
+        assert_eq!(result.stdout, expected.as_bytes(), "{args:?}");
+    }
+
+    let result = list(directory.path(), &["list", "--color", "always", "--json"]);
+    assert_eq!(result.status.code(), Some(0));
+    assert!(!result.stdout.windows(2).any(|window| window == b"\x1b["));
+    assert!(serde_json::from_slice::<serde_json::Value>(&result.stdout).is_ok());
+
+    let canonical = list(directory.path(), &["list", "--color", "always"]);
+    let alias = list(directory.path(), &["ls", "--color", "always"]);
+    assert_eq!(alias.stdout, canonical.stdout);
+}
+
+#[test]
+fn automatic_and_disabled_color_keep_captured_output_plain_and_no_color_is_respected() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("descript.ion"), "\u{feff}name note").unwrap();
+    let expected = b"name  note\n";
+
+    for args in [
+        vec!["list"],
+        vec!["list", "--color", "auto"],
+        vec!["list", "--color", "never"],
+    ] {
+        let result = list(directory.path(), &args);
+        assert_eq!(result.status.code(), Some(0), "{args:?}");
+        assert_eq!(result.stdout, expected, "{args:?}");
+    }
+
+    for value in ["1", "false"] {
+        let result = list_with_no_color(directory.path(), &["list"], value);
+        assert_eq!(result.status.code(), Some(0));
+        assert_eq!(result.stdout, expected);
+    }
+
+    let result = list_with_no_color(directory.path(), &["list", "--color", "always"], "1");
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(result.stdout, b"\x1b[36mname\x1b[39m  note\n");
+}
+
+#[test]
+fn colored_names_restore_default_foreground_before_unmodified_comment_controls() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(
+        directory.path().join("descript.ion"),
+        "\u{feff}name \u{1b}[31mred",
+    )
+    .unwrap();
+
+    let result = list(directory.path(), &["list", "--color", "always"]);
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(result.stdout, b"\x1b[36mname\x1b[39m  \x1b[31mred\n");
 }
 
 #[test]
@@ -893,8 +995,14 @@ fn list_rejects_extra_arguments_and_options_and_supports_directory_after_separat
         vec!["set", "a", "body", "--recursive", "--json"],
         vec!["remove", "a", "-r", "--json"],
         vec!["list", "--tree", "--tree", "--json"],
+        vec!["list", "--color", "--json"],
+        vec!["list", "--color", "loud", "--json"],
+        vec!["list", "--color=always", "--json"],
+        vec!["list", "--color", "always", "--color", "never", "--json"],
         vec!["get", "a", "--tree", "--json"],
+        vec!["get", "a", "--color", "auto", "--json"],
         vec!["set", "a", "body", "--tree", "--json"],
+        vec!["set", "a", "body", "--color", "auto", "--json"],
         vec!["remove", "a", "--tree", "--json"],
     ] {
         let result = list(directory.path(), &args);
