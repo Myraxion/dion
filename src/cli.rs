@@ -12,7 +12,7 @@ pub fn run() -> ExitCode {
     let json = args
         .iter()
         .take_while(|arg| *arg != "--")
-        .any(|arg| arg == "--json");
+        .any(|arg| arg == "--json" || arg == "-j");
     match parse_args(&args).and_then(|args| execute(&args, json)) {
         Ok(code) => ExitCode::from(code),
         Err(error) => {
@@ -57,7 +57,7 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
             positional.push(arg.clone());
         } else if arg == "--" {
             after_separator = true;
-        } else if arg == "--json" && !json_seen {
+        } else if (arg == "--json" || arg == "-j") && !json_seen {
             json_seen = true;
         } else if (arg == "--help" || arg == "-h") && !help {
             help = true;
@@ -65,14 +65,19 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
             long = true;
         } else if (arg == "--recursive" || arg == "-r") && !recursive {
             recursive = true;
-        } else if arg == "--tree" && !tree {
+        } else if (arg == "--tree" || arg == "-t") && !tree {
             tree = true;
-        } else if (arg == "--stdin" || arg == "--comment-file" || arg == "--edit")
+        } else if (arg == "--stdin"
+            || arg == "-i"
+            || arg == "--comment-file"
+            || arg == "-f"
+            || arg == "--edit"
+            || arg == "-e")
             && source.is_none()
         {
-            source = Some(if arg == "--stdin" {
+            source = Some(if arg == "--stdin" || arg == "-i" {
                 CommentSource::Stdin
-            } else if arg == "--edit" {
+            } else if arg == "--edit" || arg == "-e" {
                 CommentSource::Edit
             } else {
                 let file = args.next().filter(|arg| {
@@ -111,6 +116,7 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
 
 fn execute(arguments: &Arguments, json: bool) -> Result<u8, Error> {
     let args = &arguments.positional;
+    let command = args.first().and_then(|arg| arg.to_str()).map(command_name);
     if arguments.help || args.first().is_some_and(|arg| arg == "help") {
         let topic = if args.first().is_some_and(|arg| arg == "help") {
             if args.len() > 2 {
@@ -126,7 +132,7 @@ fn execute(arguments: &Arguments, json: bool) -> Result<u8, Error> {
         };
         let text = match topic {
             None => Some(help::OVERVIEW),
-            Some(topic) => topic.to_str().and_then(help::command),
+            Some(topic) => topic.to_str().map(command_name).and_then(help::command),
         }
         .ok_or_else(|| Error::new("invalid_argument", "Unknown help command", 2))?;
         return io::stdout()
@@ -135,16 +141,14 @@ fn execute(arguments: &Arguments, json: bool) -> Result<u8, Error> {
             .map(|()| 0)
             .map_err(|error| Error::new("io_error", error.to_string(), 1));
     }
-    if (arguments.long || arguments.recursive || arguments.tree)
-        && args.first().is_none_or(|command| command != "list")
-    {
+    if (arguments.long || arguments.recursive || arguments.tree) && command != Some("list") {
         return Err(Error::new(
             "invalid_argument",
             "--long, --recursive and --tree are only supported by list",
             2,
         ));
     }
-    match args.first().and_then(|arg| arg.to_str()) {
+    match command {
         Some("get") if args.len() == 2 && arguments.source.is_none() => get(args, json).map(|()| 0),
         Some("remove") if args.len() == 2 && arguments.source.is_none() => {
             remove(args, json).map(|()| 0)
@@ -161,9 +165,18 @@ fn execute(arguments: &Arguments, json: bool) -> Result<u8, Error> {
         }
         _ => Err(Error::new(
             "invalid_argument",
-            "Usage: dion [--json] get <path> | remove <path> | list [directory] [--long|-l|--tree] [--recursive|-r] | set <path> (<comment> | --stdin | --comment-file <file> | --edit)",
+            "Usage: dion [--json|-j] get <path> | remove <path> | list [directory] [--long|-l|--tree|-t] [--recursive|-r] | set <path> (<comment> | --stdin|-i | --comment-file|-f <file> | --edit|-e); use dion help for command aliases",
             2,
         )),
+    }
+}
+
+fn command_name(name: &str) -> &str {
+    match name {
+        "view" | "cat" => "get",
+        "ls" => "list",
+        "rm" | "unset" | "del" => "remove",
+        _ => name,
     }
 }
 

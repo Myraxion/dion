@@ -4,21 +4,25 @@ pub const OVERVIEW: &str = r#"Dion — 文件与文件夹备注
 
 用法：
   dion get <path>
-  dion list [directory] [--long|-l|--tree] [--recursive|-r]
-  dion set <path> (<comment> | --stdin | --comment-file <file> | --edit)
+  dion list [directory] [--long|-l|--tree|-t] [--recursive|-r]
+  dion set <path> (<comment> | --stdin|-i | --comment-file|-f <file> | --edit|-e)
   dion remove <path>
   dion help [command]
 
 命令：
-  get     查看条目自身的备注
-  list    列出目录内部条目的备注，默认当前目录、双栏展示
-  set     设置条目自身的备注
-  remove  删除条目自身的备注
+  get (view, cat)          查看条目自身的备注
+  list (ls)               列出目录内部条目的备注，默认当前目录、双栏展示
+  set                     设置条目自身的备注
+  remove (rm, unset, del)  删除条目自身的备注
+
+括号内为命令别名；help <别名> 和 <别名> -h 显示对应命令帮助。
 
 全局参数：
-  --json      输出 JSON；帮助仍为文本
+  --json, -j  输出 JSON；帮助仍为文本
   --help, -h  显示帮助
   --          结束选项解析，以 - 开头的路径或正文放在其后
+
+选项分开输入；不支持短选项连写、紧连传值或等号传值。
 "#;
 
 /// Returns the Chinese help for an existing command without performing an operation.
@@ -34,11 +38,12 @@ pub fn command(name: &str) -> Option<&'static str> {
 
 const GET: &str = r#"用途：查看文件或文件夹条目自身的备注，从父目录的 descript.ion 读取。
 
-用法：dion get <path> [--json]
+用法：dion get <path> [--json|-j]
+别名：view、cat
 
 参数与默认行为：
   <path>      条目路径，无需目标存在
-  --json      输出 JSON；默认只输出正文，不额外添加换行
+  --json, -j  输出 JSON；默认只输出正文，不额外添加换行
   --help, -h  显示帮助
 
 未找到备注时退出码为 3；已有空记录读取成功。
@@ -46,14 +51,15 @@ const GET: &str = r#"用途：查看文件或文件夹条目自身的备注，�
 
 const LIST: &str = r#"用途：列出目录内部条目的备注，包括孤立记录。
 
-用法：dion list [directory] [--long|-l|--tree] [--recursive|-r] [--json]
+用法：dion list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--json|-j]
+别名：ls
 
 参数与默认行为：
   [directory]      默认当前目录
   --long, -l       单栏展示
   --recursive, -r  递归查询子目录，名称相对于起始目录
-  --tree           树状展示，自动递归，与 --long 互斥
-  --json           输出 JSON；树模式输出普通递归 JSON
+  --tree, -t       树状展示，自动递归，与 --long 互斥
+  --json, -j       输出 JSON；树模式输出普通递归 JSON
   --help, -h       显示帮助
 
 默认只查询当前层，双栏展示完整正文，目录优先、名称自然排序。
@@ -66,18 +72,18 @@ const SET: &str = r#"用途：设置文件或文件夹条目自身的备注，�
 
 用法：
   dion set <path> <comment>
-  dion set <path> --stdin
-  dion set <path> --comment-file <file>
-  dion set <path> --edit
+  dion set <path> --stdin|-i
+  dion set <path> --comment-file|-f <file>
+  dion set <path> --edit|-e
 
 参数与默认行为：
-  <path>                 条目路径；设置非空正文要求目标存在
-  <comment>              正文参数，字面量 \n 不转换为换行
-  --stdin                从标准输入读取正文
-  --comment-file <file>  从 UTF-8 文件读取正文，接受可选 BOM
-  --edit                 编辑已有正文，无记录时打开空文本
-  --json                 输出 changed 布尔值；默认成功时静默
-  --help, -h             显示帮助
+  <path>                    条目路径；设置非空正文要求目标存在
+  <comment>                 正文参数，字面量 \n 不转换为换行
+  --stdin, -i               从标准输入读取正文
+  --comment-file, -f <file>  从 UTF-8 文件读取正文，接受可选 BOM
+  --edit, -e                编辑已有正文，无记录时打开空文本
+  --json, -j                输出 changed 布尔值；默认成功时静默
+  --help, -h                显示帮助
 
 四种正文来源互斥；正文参数、stdin 和正文文件拒绝空字符串及纯空白。
 stdin 和编辑文本也须为 UTF-8，接受可选 BOM。
@@ -89,11 +95,12 @@ stdin 和编辑文本也须为 UTF-8，接受可选 BOM。
 
 const REMOVE: &str = r#"用途：删除文件或文件夹条目自身的备注，保留目标条目。
 
-用法：dion remove <path> [--json]
+用法：dion remove <path> [--json|-j]
+别名：rm、unset、del
 
 参数与默认行为：
   <path>      条目路径，无需目标存在
-  --json      输出 changed 布尔值；默认成功时静默
+  --json, -j  输出 changed 布尔值；默认成功时静默
   --help, -h  显示帮助
 
 无记录时成功且不修改文件；删除最后一条记录时删除 descript.ion。

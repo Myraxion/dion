@@ -234,3 +234,48 @@ fn every_command_has_three_help_routes_without_required_operands() {
         }
     }
 }
+
+#[test]
+fn aliases_use_canonical_help_and_show_all_spellings() {
+    let directory = tempfile::tempdir().unwrap();
+    let overview = help(directory.path(), &["-j", "-h"]);
+    for (command, aliases) in [
+        ("get", vec!["view", "cat"]),
+        ("list", vec!["ls"]),
+        ("remove", vec!["rm", "unset", "del"]),
+    ] {
+        let baseline = help(directory.path(), &["help", command]);
+        for alias in aliases {
+            assert!(overview.contains(alias));
+            assert!(baseline.contains(alias));
+            for args in [
+                vec!["help", alias],
+                vec![alias, "-h"],
+                vec![alias, "--help"],
+                vec!["-j", alias, "-h"],
+                vec!["help", alias, "-j"],
+            ] {
+                assert_eq!(help(directory.path(), &args), baseline);
+            }
+        }
+    }
+    for (command, options) in [
+        ("get", vec!["--json, -j"]),
+        ("list", vec!["--tree, -t", "--json, -j"]),
+        (
+            "set",
+            vec![
+                "--stdin, -i",
+                "--comment-file, -f <file>",
+                "--edit, -e",
+                "--json, -j",
+            ],
+        ),
+        ("remove", vec!["--json, -j"]),
+    ] {
+        let text = help(directory.path(), &[command, "-h"]);
+        for option in options {
+            assert!(text.contains(option), "{command}: missing {option}");
+        }
+    }
+}

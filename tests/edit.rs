@@ -45,9 +45,13 @@ fn edit(dir: &Path) -> Command {
 }
 
 fn edit_named(dir: &Path, name: &str) -> Command {
+    edit_with_option(dir, name, "--edit")
+}
+
+fn edit_with_option(dir: &Path, name: &str, option: &str) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_dion"));
     cmd.current_dir(dir)
-        .args(["set", name, "--edit", "--json"])
+        .args(["set", name, option, "--json"])
         .env(
             "VISUAL",
             format!("\"{}\" --label \"quoted value\"", editor().display()),
@@ -92,6 +96,29 @@ fn prefills_logical_body_and_keeps_bytes_and_time_when_unchanged() {
     );
     assert_eq!(fs::read(&file).unwrap(), original.as_bytes());
     assert_eq!(fs::metadata(&file).unwrap().modified().unwrap(), time);
+    assert!(!edit_path(dir.path()).exists());
+}
+
+#[test]
+fn short_edit_option_launches_editor_and_saves_changed_body() {
+    let dir = fixture(Some("\u{feff}\"照片 😀.txt\" old\n".as_bytes()));
+    fs::write(dir.path().join("body.txt"), "新备注\n尾行").unwrap();
+    changed(
+        &edit_with_option(dir.path(), "照片 😀.txt", "-e")
+            .env("EDIT_BODY", "body.txt")
+            .output()
+            .unwrap(),
+        true,
+    );
+    assert_eq!(fs::read(dir.path().join("prefill.txt")).unwrap(), b"old");
+    let output = Command::new(env!("CARGO_BIN_EXE_dion"))
+        .current_dir(dir.path())
+        .args(["cat", "照片 😀.txt"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(output.stdout, "新备注\n尾行".as_bytes());
+    assert!(output.stderr.is_empty());
     assert!(!edit_path(dir.path()).exists());
 }
 

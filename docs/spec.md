@@ -11,20 +11,26 @@
 ## 命令形态
 
 ```text
-dion [--json] get <path>
-dion [--json] list [directory] [--long|-l|--tree] [--recursive|-r]
-dion [--json] set <path> <comment>
-dion [--json] set <path> --stdin
-dion [--json] set <path> --comment-file <file>
-dion [--json] set <path> --edit
-dion [--json] remove <path>
-dion [--json] --help | -h | help [command]
-dion [--json] <command> --help | -h
+dion [--json|-j] get <path>
+dion [--json|-j] list [directory] [--long|-l|--tree|-t] [--recursive|-r]
+dion [--json|-j] set <path> <comment>
+dion [--json|-j] set <path> --stdin|-i
+dion [--json|-j] set <path> --comment-file|-f <file>
+dion [--json|-j] set <path> --edit|-e
+dion [--json|-j] remove <path>
+dion [--json|-j] --help | -h | help [command]
+dion [--json|-j] <command> --help | -h
 ```
+
+- 命令别名：`view`、`cat` 对应 `get`；`ls` 对应 `list`；`rm`、`unset`、`del` 对应 `remove`。`set` 保留原名，无额外别名。别名与完整命令的操作、选项范围、输出及退出码一致。
+- 短选项与长选项等价：`--json/-j`、`--help/-h`、`--long/-l`、`--recursive/-r`、`--tree/-t`、`--stdin/-i`、`--comment-file/-f`、`--edit/-e`。后文长选项的规则同样适用于对应短选项。
+- 命令及选项区分大小写，只接受明确指定的写法，不识别任意前缀。选项须按独立参数输入，不支持短选项连写、选项与值紧连或等号传值；`-f` 的文件名放在下一个参数中。
+- 重复选项（包括长短同义组合）报 `invalid_argument`、退出码 2；正文来源互斥、列表模式互斥、命令范围和 `--` 分隔规则保持一致。
 
 ## 命令帮助
 
 - 总览入口为 `dion --help`、`dion -h`、`dion help`；四个操作命令均支持 `dion <command> --help`、`dion <command> -h`、`dion help <command>`，不要求操作所需的路径或正文。
+- 命令别名支持相同的帮助入口，输出对应完整命令的同一份帮助；总览及有别名的子命令帮助列出全部别名。
 - 帮助为中文，命令、参数及环境变量名称保留英文；总览和子命令帮助仅包含用途、用法、参数及关键默认行为，不包含示例和实现细节。
 - 帮助写 stdout，退出码 0，stderr 为空；带 `--json` 时仍为文本，不包装 JSON。帮助不执行备注读取、列表遍历、修改、正文输入读取或编辑器启动。
 - 沿用选项解析和 `--` 分隔规则；`--` 后的 `--help`、`-h` 是普通路径或正文。未知帮助主题或 `help` 的多余位置参数报 `invalid_argument`（退出码 2）；未知/重复选项、互斥列表模式或输入来源仍在参数解析时报错。

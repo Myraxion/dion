@@ -21,11 +21,32 @@ Dion 是一个 Windows 原生命令行工具，用于查看、列出、设置和
 
 ```
 dion help [command]
-dion [--json] get <path>
-dion [--json] set <path> (<comment> | --comment-file <file> | --stdin | --edit)
-dion [--json] list [directory] [--long|-l | --tree] [--recursive|-r]
-dion [--json] remove <path>
+dion [--json|-j] get <path>
+dion [--json|-j] set <path> (<comment> | --comment-file|-f <file> | --stdin|-i | --edit|-e)
+dion [--json|-j] list [directory] [--long|-l | --tree|-t] [--recursive|-r]
+dion [--json|-j] remove <path>
 ```
+
+完整命令和别名行为相同，均支持 `help <command>` 和 `<command> -h`：
+
+| 完整命令 | 别名 |
+| --- | --- |
+| `get` | `view`、`cat` |
+| `list` | `ls` |
+| `set` | 无 |
+| `remove` | `rm`、`unset`、`del` |
+
+选项短写：`--json/-j`、`--help/-h`、`--long/-l`、`--recursive/-r`、`--tree/-t`、`--stdin/-i`、`--comment-file/-f`、`--edit/-e`。例如：
+
+```text
+dion cat file.txt
+dion ls -t
+dion set file.txt -f comment.txt
+dion set file.txt -e
+dion unset file.txt -j
+```
+
+选项分开输入，值放在下一个参数中；不支持 `-lr`、`-ffile` 或等号传值。重复同义选项（如 `--json -j`）仍报参数错误。
 
 ### 命令说明
 

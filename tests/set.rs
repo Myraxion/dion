@@ -29,7 +29,7 @@ fn source_set(directory: &Path, source: &str, bytes: &[u8]) -> Output {
     command
         .current_dir(directory)
         .args(["--json", "set", "照片 😀.txt", source]);
-    if source == "--comment-file" {
+    if source == "--comment-file" || source == "-f" {
         fs::write(directory.join("body.txt"), bytes).unwrap();
         command.arg("body.txt");
         command.output().unwrap()
@@ -47,7 +47,7 @@ fn source_set(directory: &Path, source: &str, bytes: &[u8]) -> Output {
 
 #[test]
 fn stdin_and_file_accept_optional_bom_preserve_unicode_and_tail_breaks() {
-    for source in ["--stdin", "--comment-file"] {
+    for source in ["--stdin", "-i", "--comment-file", "-f"] {
         for prefix in ["", "\u{feff}"] {
             let directory = fixture(None);
             let input = format!("{prefix}  中文\\n\\folder\r\n\tline\r\n\r\n");
@@ -69,7 +69,7 @@ fn stdin_and_file_accept_optional_bom_preserve_unicode_and_tail_breaks() {
 
 #[test]
 fn normalized_source_body_keeps_original_bytes_and_timestamp_when_equal() {
-    for source in ["--stdin", "--comment-file"] {
+    for source in ["--stdin", "-i", "--comment-file", "-f"] {
         for prefix in ["", "\u{feff}"] {
             let original =
                 "\u{feff}\"照片 😀.txt\"   中文\\\\n\\\\folder\\n\tline\\n\\n\u{4}\u{c2}\r";
