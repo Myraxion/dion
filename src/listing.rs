@@ -155,7 +155,8 @@ fn render_tree(
         let branch = if last { "└── " } else { "├── " };
         let continuation = if last { "    " } else { "│   " };
         let marker = if node.directory { "\\" } else { "" };
-        write!(output, "{prefix}{branch}")?;
+        write_tree_structure(output, prefix, color)?;
+        write_tree_structure(output, branch, color)?;
         write_name(output, &node.name, marker, color)?;
         if let Some(comment) = &node.comment {
             let padding = " ".repeat(node.name.width() + marker.len() + 2);
@@ -163,7 +164,9 @@ fn render_tree(
                 if index == 0 {
                     writeln!(output, "  {line}")?;
                 } else {
-                    writeln!(output, "{prefix}{continuation}{padding}{line}")?;
+                    write_tree_structure(output, prefix, color)?;
+                    write_tree_structure(output, continuation, color)?;
+                    writeln!(output, "{padding}{line}")?;
                 }
             }
         } else {
@@ -175,6 +178,20 @@ fn render_tree(
             &format!("{prefix}{continuation}"),
             color,
         )?;
+    }
+    Ok(())
+}
+
+fn write_tree_structure(output: &mut impl Write, structure: &str, color: bool) -> io::Result<()> {
+    for (index, segment) in structure.split(' ').enumerate() {
+        if index > 0 {
+            write!(output, " ")?;
+        }
+        if color && !segment.is_empty() {
+            write!(output, "\x1b[36m{segment}\x1b[39m")?;
+        } else {
+            write!(output, "{segment}")?;
+        }
     }
     Ok(())
 }

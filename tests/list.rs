@@ -48,7 +48,7 @@ fn color_always_styles_names_in_every_text_layout_but_not_json() {
         ),
         (
             vec!["--color", "always", "--tree"],
-            "├── \u{1b}[36mfolder\\\u{1b}[39m  directory note\n│   └── \u{1b}[36mnested\u{1b}[39m  child note\n└── \u{1b}[36mfile\u{1b}[39m  note\n",
+            "\u{1b}[36m├──\u{1b}[39m \u{1b}[36mfolder\\\u{1b}[39m  directory note\n\u{1b}[36m│\u{1b}[39m   \u{1b}[36m└──\u{1b}[39m \u{1b}[36mnested\u{1b}[39m  child note\n\u{1b}[36m└──\u{1b}[39m \u{1b}[36mfile\u{1b}[39m  note\n",
         ),
     ] {
         let mut args = vec!["list"];
@@ -112,6 +112,25 @@ fn colored_names_restore_default_foreground_before_unmodified_comment_controls()
     let result = list(directory.path(), &["list", "--color", "always"]);
     assert_eq!(result.status.code(), Some(0));
     assert_eq!(result.stdout, b"\x1b[36mname\x1b[39m  \x1b[31mred\n");
+}
+
+#[test]
+fn tree_colors_comment_continuation_guides_without_coloring_comment_or_indentation() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::create_dir(directory.path().join("folder")).unwrap();
+    fs::write(
+        directory.path().join("descript.ion"),
+        "\u{feff}folder first\\nsecond\u{4}\u{c2}\r\nother note",
+    )
+    .unwrap();
+
+    let result = list(directory.path(), &["list", "--tree", "--color", "always"]);
+    assert_eq!(result.status.code(), Some(0));
+    let expected = format!(
+        "\u{1b}[36m├──\u{1b}[39m \u{1b}[36mfolder\\\u{1b}[39m  first\n\u{1b}[36m│\u{1b}[39m{}second\n\u{1b}[36m└──\u{1b}[39m \u{1b}[36mother\u{1b}[39m  note\n",
+        " ".repeat(12),
+    );
+    assert_eq!(result.stdout, expected.as_bytes());
 }
 
 #[test]
