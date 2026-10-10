@@ -3,6 +3,7 @@ mod comment;
 mod editor;
 mod error;
 mod help;
+mod i18n;
 mod listing;
 mod name;
 mod storage;

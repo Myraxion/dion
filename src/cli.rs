@@ -1,4 +1,6 @@
-use crate::{comment, editor, error::Error, help, listing, name::Name, storage, terminal};
+use crate::{
+    comment, editor, error::Error, help, i18n::Language, listing, name::Name, storage, terminal,
+};
 use std::{
     env,
     ffi::OsString,
@@ -9,18 +11,22 @@ use std::{
 
 pub fn run() -> ExitCode {
     let args: Vec<_> = env::args_os().skip(1).collect();
+    let language = language_option(&args).unwrap_or_else(Language::from_environment);
     let json = args
         .iter()
         .take_while(|arg| *arg != "--")
         .any(|arg| arg == "--json" || arg == "-j");
-    match parse_args(&args).and_then(|args| execute(&args, json)) {
+    match parse_args(&args).and_then(|args| execute(&args, json, language)) {
         Ok(code) => ExitCode::from(code),
         Err(error) => {
             let mut stderr = io::stderr().lock();
             if json {
-                let _ = write_json(&mut stderr, &serde_json::json!({ "error": error }));
+                let _ = write_json(
+                    &mut stderr,
+                    &serde_json::json!({ "error": error.localized(language) }),
+                );
             } else {
-                let _ = error.write_text(&mut stderr);
+                let _ = error.write_text(&mut stderr, language);
             }
             ExitCode::from(error.exit_code)
         }
@@ -60,6 +66,7 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
     let mut tree = false;
     let mut help = false;
     let mut color = None;
+    let mut language = None;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         if after_separator {
@@ -68,6 +75,16 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
             after_separator = true;
         } else if (arg == "--json" || arg == "-j") && !json_seen {
             json_seen = true;
+        } else if arg == "--lang" && language.is_none() {
+            let value = args
+                .next()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| {
+                    Error::new("invalid_argument", "--lang requires en, zh-CN or auto", 2)
+                })?;
+            language = Some(Language::resolve_option(value).ok_or_else(|| {
+                Error::new("invalid_argument", "--lang requires en, zh-CN or auto", 2)
+            })?);
         } else if (arg == "--help" || arg == "-h") && !help {
             help = true;
         } else if (arg == "--long" || arg == "-l") && !long {
@@ -147,7 +164,7 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
     })
 }
 
-fn execute(arguments: &Arguments, json: bool) -> Result<u8, Error> {
+fn execute(arguments: &Arguments, json: bool, language: Language) -> Result<u8, Error> {
     let args = &arguments.positional;
     let command = args.first().and_then(|arg| arg.to_str()).map(command_name);
     if arguments.help || args.first().is_some_and(|arg| arg == "help") {
@@ -164,8 +181,11 @@ fn execute(arguments: &Arguments, json: bool) -> Result<u8, Error> {
             args.first()
         };
         let text = match topic {
-            None => Some(help::OVERVIEW),
-            Some(topic) => topic.to_str().map(command_name).and_then(help::command),
+            None => Some(help::overview(language)),
+            Some(topic) => topic
+                .to_str()
+                .map(command_name)
+                .and_then(|command| help::command_for(command, language)),
         }
         .ok_or_else(|| Error::new("invalid_argument", "Unknown help command", 2))?;
         return io::stdout()
@@ -195,6 +215,7 @@ fn execute(arguments: &Arguments, json: bool) -> Result<u8, Error> {
             arguments.recursive,
             arguments.tree,
             arguments.color.unwrap_or(ColorMode::Auto),
+            language,
         ),
         Some("set") if args.len() == if arguments.source.is_some() { 2 } else { 3 } => {
             set(args, arguments.source.as_ref(), json).map(|()| 0)
@@ -205,6 +226,38 @@ fn execute(arguments: &Arguments, json: bool) -> Result<u8, Error> {
             2,
         )),
     }
+}
+
+fn language_option(args: &[OsString]) -> Option<Language> {
+    // This prepass finds the language before parsing can stop at an earlier error.
+    // Keep its value consumption aligned with parse_args so option values stay literal.
+    let mut index = 0;
+    let mut color_seen = false;
+    let mut source_seen = false;
+    while index < args.len() {
+        let argument = args[index].to_str()?;
+        if argument == "--" {
+            break;
+        }
+        if argument == "--lang" {
+            let value = args.get(index + 1)?.to_str()?;
+            return Language::resolve_option(value);
+        }
+        if argument == "--color" && !color_seen {
+            color_seen = true;
+            index += 2;
+            continue;
+        }
+        if !source_seen && matches!(argument, "--stdin" | "-i" | "--edit" | "-e") {
+            source_seen = true;
+        } else if !source_seen && matches!(argument, "--comment-file" | "-f") {
+            source_seen = true;
+            index += 2;
+            continue;
+        }
+        index += 1;
+    }
+    None
 }
 
 fn command_name(name: &str) -> &str {
@@ -406,6 +459,7 @@ fn list(
     recursive: bool,
     tree: bool,
     color_mode: ColorMode,
+    language: Language,
 ) -> Result<u8, Error> {
     let directory = normalize_verbatim_path(
         args.get(1)
@@ -417,7 +471,7 @@ fn list(
         let mut output = io::stdout().lock();
         listing::tree(&mut output, &nodes, use_color)
             .map_err(|error| Error::new("io_error", error.to_string(), 1))?;
-        return finish_list(&mut output, &errors, !nodes.is_empty());
+        return finish_list(&mut output, &errors, !nodes.is_empty(), language);
     }
     let (entries, errors) = listing::collect(&directory, recursive || tree)?;
     let (use_color, _console_mode) = prepare_color(color_mode, json);
@@ -425,7 +479,10 @@ fn list(
     let result = if json {
         write_json(
             &mut output,
-            &serde_json::json!({ "entries": entries, "errors": errors }),
+            &serde_json::json!({
+                "entries": entries,
+                "errors": errors.iter().map(|error| error.localized(language)).collect::<Vec<_>>()
+            }),
         )
     } else if long {
         listing::long(&mut output, &entries, use_color)
@@ -436,7 +493,7 @@ fn list(
     if json {
         Ok(u8::from(!errors.is_empty()))
     } else {
-        finish_list(&mut output, &errors, !entries.is_empty())
+        finish_list(&mut output, &errors, !entries.is_empty(), language)
     }
 }
 
@@ -457,15 +514,24 @@ fn prepare_color(color_mode: ColorMode, json: bool) -> (bool, Option<terminal::C
     )
 }
 
-fn finish_list(output: &mut impl Write, errors: &[Error], has_entries: bool) -> Result<u8, Error> {
+fn finish_list(
+    output: &mut impl Write,
+    errors: &[Error],
+    has_entries: bool,
+    language: Language,
+) -> Result<u8, Error> {
     let result = (|| {
         if !errors.is_empty() {
             if has_entries {
                 writeln!(output)?;
             }
-            writeln!(output, "错误（{}）：", errors.len())?;
+            if language.is_chinese() {
+                writeln!(output, "错误（{}）：", errors.len())?;
+            } else {
+                writeln!(output, "Errors ({}):", errors.len())?;
+            }
             for error in errors {
-                error.write_text(output)?;
+                error.write_text(output, language)?;
             }
         }
         Ok::<(), io::Error>(())

@@ -9,6 +9,7 @@ fn get(directory: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_dion"))
         .current_dir(directory)
         .args(args)
+        .env("DION_LANG", "en")
         .output()
         .unwrap()
 }

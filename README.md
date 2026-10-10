@@ -2,6 +2,8 @@
 
 Dion 是一个 Windows 原生命令行工具，用于查看、列出、设置和删除文件与文件夹的备注，与 Total Commander 的带 BOM UTF-8 `descript.ion` 格式互操作。
 
+Language / 语言： [English](README.en.md) | 简体中文
+
 ## 核心特性
 
 - **单文件运行**：适用于 Windows 10/11 x64，无需安装 Rust 或额外运行库；当前 Release exe 为 509,952 字节（498 KiB）。
@@ -16,6 +18,8 @@ Dion 是一个 Windows 原生命令行工具，用于查看、列出、设置和
 名称匹配使用 Windows 原生的不区分大小写比较，不跟随目录的大小写敏感设置；名称等价的重复记录视为冲突。具体规则见[行为契约](docs/spec.md#备注格式与局部修改)。
 
 ## 快速上手
+
+程序文案支持简体中文和英文。使用 `--lang zh-CN`、`--lang en` 或 `--lang auto` 临时选择语言，也可设置 `DION_LANG`；未指定时跟随 Windows 用户界面语言，不支持的语言使用英文。
 
 ### 命令用法
 

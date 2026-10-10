@@ -1,3 +1,5 @@
+use crate::i18n::Language;
+
 pub const OVERVIEW: &str = r#"Dion — 文件与文件夹备注
 
 用途：查看、列出、设置和删除 descript.ion 中的备注。
@@ -18,11 +20,40 @@ pub const OVERVIEW: &str = r#"Dion — 文件与文件夹备注
 括号内为命令别名；help <别名> 和 <别名> -h 显示对应命令帮助。
 
 全局参数：
+  --lang <en|zh-CN|auto>  设置程序文案语言
   --json, -j  输出 JSON；帮助仍为文本
   --help, -h  显示帮助
   --          结束选项解析，以 - 开头的路径或正文放在其后
 
 选项分开输入；不支持短选项连写、紧连传值或等号传值。
+"#;
+
+const OVERVIEW_EN: &str = r#"Dion — file and folder comments
+
+Purpose: View, list, set, and remove comments in descript.ion.
+
+Usage:
+  dion get <path>
+  dion list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--color auto|always|never]
+  dion set <path> (<comment> | --stdin|-i | --comment-file|-f <file> | --edit|-e)
+  dion remove <path>
+  dion help [command]
+
+Commands:
+  get (view, cat)          Show a file or folder comment
+  list (ls)               List comments inside a directory; defaults to the current directory
+  set                     Set a comment for a file or folder
+  remove (rm, unset, del)  Remove a comment from a file or folder
+
+Names in parentheses are aliases. Use help <alias> or <alias> -h for command help.
+
+Global options:
+  --lang <en|zh-CN|auto>  Select the language for program messages
+  --json, -j              Output JSON; help remains plain text
+  --help, -h              Show help
+  --                      End option parsing; put paths or comments starting with - after it
+
+Options take separate arguments. Combined short options, attached values, and = values are not supported.
 "#;
 
 /// Returns the Chinese help for an existing command without performing an operation.
@@ -35,6 +66,99 @@ pub fn command(name: &str) -> Option<&'static str> {
         _ => None,
     }
 }
+
+pub fn overview(language: Language) -> &'static str {
+    if language.is_chinese() {
+        OVERVIEW
+    } else {
+        OVERVIEW_EN
+    }
+}
+
+pub fn command_for(name: &str, language: Language) -> Option<&'static str> {
+    if language.is_chinese() {
+        return command(name);
+    }
+    match name {
+        "get" => Some(GET_EN),
+        "list" => Some(LIST_EN),
+        "set" => Some(SET_EN),
+        "remove" => Some(REMOVE_EN),
+        _ => None,
+    }
+}
+
+const GET_EN: &str = r#"Purpose: Show the comment for a file or folder, stored in its parent directory's descript.ion.
+
+Usage: dion get <path> [--json|-j]
+Aliases: view, cat
+
+Arguments and defaults:
+  <path>      Entry path; the target does not need to exist
+  --json, -j  Output JSON; by default output only the comment without an extra newline
+  --help, -h  Show help
+
+Exit code 3 means no comment was found. An existing empty comment succeeds.
+"#;
+
+const LIST_EN: &str = r#"Purpose: List comments for entries inside a directory, including orphan records.
+
+Usage: dion list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--color auto|always|never] [--json|-j]
+Alias: ls
+
+Arguments and defaults:
+  [directory]      Defaults to the current directory
+  --long, -l       Use one-column output
+  --recursive, -r  Include subdirectories; names are relative to the starting directory
+  --tree, -t       Show a tree and recurse automatically; conflicts with --long
+  --color <mode>   Name color: auto (default), always, or never
+  --json, -j       Output JSON; tree mode returns ordinary recursive JSON
+  --help, -h       Show help
+
+By default, list the current directory only, in aligned columns with directories first and natural name sorting.
+auto enables color only in a supported terminal. A nonempty NO_COLOR disables default color; always overrides it.
+JSON output never includes color codes.
+Recursive listing does not follow directory symlinks or junctions, unless one is the starting directory.
+Bad records and read errors are skipped by default; text output summarizes errors and JSON returns entries and errors.
+Skipped errors use exit code 1; an inaccessible starting directory fails immediately.
+"#;
+
+const SET_EN: &str = r#"Purpose: Set a comment for a file or folder in its parent directory's descript.ion.
+
+Usage:
+  dion set <path> <comment>
+  dion set <path> --stdin|-i
+  dion set <path> --comment-file|-f <file>
+  dion set <path> --edit|-e
+
+Arguments and defaults:
+  <path>                    Entry path; a nonempty comment requires the target to exist
+  <comment>                 Comment text; literal \n is not converted to a line break
+  --stdin, -i               Read the comment from standard input
+  --comment-file, -f <file> Read the comment from a UTF-8 file; an optional BOM is accepted
+  --edit, -e                Edit the existing comment, or start with empty text
+  --json, -j                Output a changed boolean; success is silent by default
+  --help, -h                Show help
+
+Comment sources are mutually exclusive. Text arguments, stdin, and files reject empty or whitespace-only content.
+Stdin and editor text must be UTF-8; an optional BOM is accepted.
+The editor is selected from VISUAL, EDITOR, then Windows Notepad, and Dion waits for it to exit.
+Clearing the editor text removes the comment; whitespace-only text is still invalid. Unchanged text is not written.
+If editing fails, the temporary text is retained and its recovery path is reported on stderr.
+"#;
+
+const REMOVE_EN: &str = r#"Purpose: Remove a file or folder comment while preserving the target entry.
+
+Usage: dion remove <path> [--json|-j]
+Aliases: rm, unset, del
+
+Arguments and defaults:
+  <path>      Entry path; the target does not need to exist
+  --json, -j  Output a changed boolean; success is silent by default
+  --help, -h  Show help
+
+If no record exists, the command succeeds without changes. Removing the last record deletes descript.ion.
+"#;
 
 const GET: &str = r#"用途：查看文件或文件夹条目自身的备注，从父目录的 descript.ion 读取。
 

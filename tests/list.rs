@@ -8,6 +8,7 @@ fn list(directory: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_dion"))
         .current_dir(directory)
         .args(args)
+        .env("DION_LANG", "zh-CN")
         .env_remove("NO_COLOR")
         .output()
         .unwrap()
@@ -17,6 +18,7 @@ fn list_with_no_color(directory: &Path, args: &[&str], value: &str) -> Output {
     Command::new(env!("CARGO_BIN_EXE_dion"))
         .current_dir(directory)
         .args(args)
+        .env("DION_LANG", "zh-CN")
         .env("NO_COLOR", value)
         .output()
         .unwrap()
@@ -905,7 +907,7 @@ fn bad_records_are_skipped_without_losing_records_before_or_after_them() {
                 assert!(error.find("third").unwrap() < error.find("错误（1）：").unwrap());
                 assert!(error.contains(code));
                 assert!(error.contains("descript.ion"));
-                assert!(error.contains("line 4"));
+                assert!(error.contains("第 4 行"));
             }
         }
         assert_eq!(
@@ -988,7 +990,7 @@ fn multiple_bad_lines_are_reported_in_physical_order_after_the_list() {
                 .zip(expected_codes.into_iter().zip([2, 4, 5, 6, 7]))
             {
                 assert!(error.starts_with(code));
-                assert!(error.ends_with(&format!(" at line {line}")));
+                assert!(error.ends_with(&format!(" 第 {line} 行")));
             }
         }
         assert_eq!(fs::read(&file).unwrap(), bytes);

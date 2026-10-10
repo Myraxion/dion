@@ -6,7 +6,7 @@ use std::{
 
 fn remove(directory: &Path, name: &str, json: bool) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_dion"));
-    command.current_dir(directory);
+    command.current_dir(directory).env("DION_LANG", "en");
     if json {
         command.arg("--json");
     }

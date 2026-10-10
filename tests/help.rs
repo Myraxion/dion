@@ -4,6 +4,7 @@ fn help(directory: &Path, args: &[&str]) -> String {
     let result = Command::new(env!("CARGO_BIN_EXE_dion"))
         .current_dir(directory)
         .args(args)
+        .env("DION_LANG", "zh-CN")
         .env("VISUAL", "dion-help-editor-must-not-run.exe")
         .env("EDITOR", "dion-help-editor-must-not-run.exe")
         .output()

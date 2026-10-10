@@ -10,6 +10,7 @@
 | [List 与编辑增强设计](list-edit-design.md) | 展示示例与设计调研背景 |
 | [List 名称着色设计](list-color-design.md) | 已实施行为、颜色控制、Windows 实测状态及验收范围 |
 | [命令别名与参数简写设计](cli-alias-design.md) | 已确认的别名、短选项与兼容性规则 |
+| [多语言支持设计](multilingual-design.md) | 中英文支持的决策、实现与验收记录 |
 | [Windows 原生名称比较设计](windows-name-comparison-design.md) | 名称等价规则、系统 API 调研与验收范围 |
 | [领域词汇表](../GLOSSARY.md) | 统一领域术语 |
 | [ADR](adr/) | 关键决策及其理由；策略改变时记录替代关系 |

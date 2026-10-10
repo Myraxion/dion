@@ -8,7 +8,7 @@ use tempfile::TempDir;
 
 fn set(directory: &Path, name: &str, body: &str, json: bool) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_dion"));
-    command.current_dir(directory);
+    command.current_dir(directory).env("DION_LANG", "en");
     if json {
         command.arg("--json");
     }
@@ -26,9 +26,12 @@ fn fixture(bytes: Option<&[u8]>) -> TempDir {
 
 fn source_set(directory: &Path, source: &str, bytes: &[u8]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_dion"));
-    command
-        .current_dir(directory)
-        .args(["--json", "set", "照片 😀.txt", source]);
+    command.current_dir(directory).env("DION_LANG", "en").args([
+        "--json",
+        "set",
+        "照片 😀.txt",
+        source,
+    ]);
     if source == "--comment-file" || source == "-f" {
         fs::write(directory.join("body.txt"), bytes).unwrap();
         command.arg("body.txt");

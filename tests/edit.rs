@@ -51,7 +51,7 @@ fn edit_named(dir: &Path, name: &str) -> Command {
 fn edit_with_option(dir: &Path, name: &str, option: &str) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_dion"));
     cmd.current_dir(dir)
-        .args(["set", name, option, "--json"])
+        .args(["set", name, option, "--lang", "en", "--json"])
         .env(
             "VISUAL",
             format!("\"{}\" --label \"quoted value\"", editor().display()),
