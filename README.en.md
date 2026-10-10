@@ -65,7 +65,7 @@ Install stable Rust and the MSVC build tools, then run the unified checks in Pow
 .\scripts\check.ps1
 ```
 
-This runs formatting, Clippy, the full test suite, and a release build. The executable is `target/release/dion.exe`; the MSVC runtime is statically linked. GitHub Actions runs the same checks on pushes and pull requests. Pushing a `v*` tag creates a GitHub Release with the executable. Download releases from [GitHub Releases](https://github.com/Myraxion/dion/releases).
+This runs formatting, Clippy, the full test suite, and a release build. The executable is `target/release/dion.exe`; the MSVC runtime is statically linked. GitHub Actions runs the same checks on pushes and pull requests. Before releasing, update the version in `Cargo.toml` and `Cargo.lock`, prepare and confirm `docs/releases/<tag>.md`, then commit and push the changes. Pushing the corresponding `v*` tag creates a GitHub Release with those notes and the executable. Download releases from [GitHub Releases](https://github.com/Myraxion/dion/releases).
 
 See the [behavior contract](docs/spec.md), [documentation index](docs/README.md), and [performance report](docs/benchmarks.md).
 

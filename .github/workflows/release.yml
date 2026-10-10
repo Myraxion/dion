@@ -27,4 +27,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: gh release create "$env:RELEASE_TAG" ./target/release/dion.exe --verify-tag --generate-notes --title "$env:RELEASE_TAG"
+        run: gh release create "$env:RELEASE_TAG" ./target/release/dion.exe --verify-tag --notes-file "./docs/releases/$env:RELEASE_TAG.md" --title "$env:RELEASE_TAG"

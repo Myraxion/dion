@@ -6,7 +6,7 @@ Language / 语言： [English](README.en.md) | 简体中文
 
 ## 核心特性
 
-- **单文件运行**：适用于 Windows 10/11 x64，无需安装 Rust 或额外运行库；当前 Release exe 为 509,952 字节（498 KiB）。
+- **单文件运行**：适用于 Windows 10/11 x64，无需安装 Rust 或额外运行库；当前本地 Release exe 为 524,800 字节（512.5 KiB）。
 - **四个基础命令**：查看单条备注、列出目录备注、设置或覆盖备注、显式删除备注。
 - **列表展示**：目录优先、名称自然排序，默认双栏对齐，支持 `--long`（`-l`）、`--recursive`（`-r`）、`--tree` 及名称自动着色。
 - **Unicode 与多行**：支持中文、Emoji、含空格的名称和多行正文，保留缩进、首尾空白和空行。
@@ -84,13 +84,13 @@ dion unset file.txt -j
 
 脚本依次执行格式检查、Clippy、完整测试和 Release 编译，产物为 `target/release/dion.exe`。默认静态链接 MSVC CRT。
 
-GitHub Actions 在 push 和 pull request 时自动执行上述检查，也支持手动触发。推送 `v*` 版本标签时，[发布流程](.github/workflows/release.yml) 会在 Windows x64 上检查并编译，通过后创建 GitHub Release，自动生成发布说明并上传 `dion.exe`。
+GitHub Actions 在 push 和 pull request 时自动执行上述检查，也支持手动触发。推送 `v*` 版本标签时，[发布流程](.github/workflows/release.yml) 会在 Windows x64 上检查并编译，通过后创建 GitHub Release，使用 `docs/releases/<标签>.md` 中的发布笔记并上传 `dion.exe`。
 
-发布前更新 `Cargo.toml` 和 `Cargo.lock` 中的版本号，将代码与工作流提交并推送，再推送对应标签，例如：
+发布前更新 `Cargo.toml` 和 `Cargo.lock` 中的版本号，准备并确认 `docs/releases/<标签>.md` 中的发布笔记，将代码与发布笔记提交并推送，再推送对应标签，例如：
 
 ```powershell
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 用户可在 [GitHub Releases](https://github.com/Myraxion/dion/releases) 下载 `dion.exe`。
