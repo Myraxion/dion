@@ -159,13 +159,24 @@ fn render_tree(
         write_tree_structure(output, branch, color)?;
         write_name(output, &node.name, marker, color)?;
         if let Some(comment) = &node.comment {
-            let padding = " ".repeat(node.name.width() + marker.len() + 2);
+            let has_children = !node.children.is_empty();
+            let child_guide = "│   ";
+            let raw_width = node.name.width() + marker.len() + 2;
+            let padding_len = if has_children {
+                raw_width.saturating_sub(child_guide.width())
+            } else {
+                raw_width
+            };
+            let padding = " ".repeat(padding_len);
             for (index, line) in comment.split('\n').enumerate() {
                 if index == 0 {
                     writeln!(output, "  {line}")?;
                 } else {
                     write_tree_structure(output, prefix, color)?;
                     write_tree_structure(output, continuation, color)?;
+                    if has_children {
+                        write_tree_structure(output, child_guide, color)?;
+                    }
                     writeln!(output, "{padding}{line}")?;
                 }
             }

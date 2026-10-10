@@ -228,10 +228,10 @@ fn tree_merges_directory_comments_and_prunes_unrelated_nodes_in_natural_order() 
             result.stdout,
             concat!(
                 "├── DIR2\\   first\n",
-                "│          \n",
-                "│           tail \n",
-                "│          \n",
-                "│          \n",
+                "│   │      \n",
+                "│   │       tail \n",
+                "│   │      \n",
+                "│   │      \n",
                 "│   ├── middle\\\n",
                 "│   │   └── deep\\\n",
                 "│   │       └── lost  literal\\n\n",
@@ -307,7 +307,7 @@ fn tree_aligns_wide_names_under_last_branches_without_wrapping() {
     assert_eq!(
         String::from_utf8(result.stdout).unwrap(),
         format!(
-            "└── 中😀\\  dir\n           end\n    └── Ａ   first\t\n            \n            {}\n            \n",
+            "└── 中😀\\  dir\n    │      end\n    └── Ａ   first\t\n            \n            {}\n            \n",
             "x".repeat(300)
         )
     );
@@ -1120,4 +1120,44 @@ fn locked_description_is_reported_and_descendants_are_still_visited() {
     assert_eq!(value["entries"].as_array().unwrap().len(), 1);
     assert_eq!(value["entries"][0]["name"], "child\\after");
     assert_eq!(value["errors"][0]["code"], "io_error");
+}
+
+#[test]
+fn tree_connects_multiline_directory_comment_to_children_and_maintains_alignment() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::create_dir_all(directory.path().join("200 Note/child_dir")).unwrap();
+    fs::write(
+        directory.path().join("descript.ion"),
+        "\u{feff}\"200 Note\" line1\\nline2\\nline3\u{4}\u{c2}\r\nother.txt other_note",
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("200 Note/descript.ion"),
+        "\u{feff}child_dir child_note\r\nchild_file.txt file_note",
+    )
+    .unwrap();
+
+    let result = list(directory.path(), &["list", "--tree"]);
+    assert_eq!(result.status.code(), Some(0));
+    let expected = concat!(
+        "├── 200 Note\\  line1\n",
+        "│   │          line2\n",
+        "│   │          line3\n",
+        "│   ├── child_dir\\  child_note\n",
+        "│   └── child_file.txt  file_note\n",
+        "└── other.txt  other_note\n",
+    );
+    assert_eq!(String::from_utf8(result.stdout).unwrap(), expected);
+
+    let colored = list(directory.path(), &["list", "--tree", "--color", "always"]);
+    assert_eq!(colored.status.code(), Some(0));
+    let expected_colored = concat!(
+        "\u{1b}[36m├──\u{1b}[39m \u{1b}[36m200 Note\\\u{1b}[39m  line1\n",
+        "\u{1b}[36m│\u{1b}[39m   \u{1b}[36m│\u{1b}[39m          line2\n",
+        "\u{1b}[36m│\u{1b}[39m   \u{1b}[36m│\u{1b}[39m          line3\n",
+        "\u{1b}[36m│\u{1b}[39m   \u{1b}[36m├──\u{1b}[39m \u{1b}[36mchild_dir\\\u{1b}[39m  child_note\n",
+        "\u{1b}[36m│\u{1b}[39m   \u{1b}[36m└──\u{1b}[39m \u{1b}[36mchild_file.txt\u{1b}[39m  file_note\n",
+        "\u{1b}[36m└──\u{1b}[39m \u{1b}[36mother.txt\u{1b}[39m  other_note\n",
+    );
+    assert_eq!(String::from_utf8(colored.stdout).unwrap(), expected_colored);
 }
