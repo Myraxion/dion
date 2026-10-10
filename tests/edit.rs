@@ -41,9 +41,13 @@ fn fixture(original: Option<&[u8]>) -> TempDir {
 }
 
 fn edit(dir: &Path) -> Command {
+    edit_named(dir, "照片 😀.txt")
+}
+
+fn edit_named(dir: &Path, name: &str) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_dion"));
     cmd.current_dir(dir)
-        .args(["set", "照片 😀.txt", "--edit", "--json"])
+        .args(["set", name, "--edit", "--json"])
         .env(
             "VISUAL",
             format!("\"{}\" --label \"quoted value\"", editor().display()),
@@ -89,6 +93,29 @@ fn prefills_logical_body_and_keeps_bytes_and_time_when_unchanged() {
     assert_eq!(fs::read(&file).unwrap(), original.as_bytes());
     assert_eq!(fs::metadata(&file).unwrap().modified().unwrap(), time);
     assert!(!edit_path(dir.path()).exists());
+}
+
+#[test]
+fn prefills_only_the_ordinal_name_match_and_preserves_description_on_noop() {
+    for (name, original, prefill) in [
+        ("k.txt", "\u{feff}K.txt kelvin\n", ""),
+        ("K.TXT", "\u{feff}K.txt kelvin\nk.txt latin\n", "latin"),
+        ("ÉCOLE.TXT", "\u{feff}école.txt accent\n", "accent"),
+    ] {
+        let dir = fixture(Some(original.as_bytes()));
+        fs::write(dir.path().join(name), b"entry").unwrap();
+        let file = dir.path().join("descript.ion");
+        let time = fs::metadata(&file).unwrap().modified().unwrap();
+        changed(&edit_named(dir.path(), name).output().unwrap(), false);
+        assert_eq!(
+            fs::read(dir.path().join("prefill.txt")).unwrap(),
+            prefill.as_bytes(),
+            "{name}"
+        );
+        assert_eq!(fs::read(&file).unwrap(), original.as_bytes());
+        assert_eq!(fs::metadata(&file).unwrap().modified().unwrap(), time);
+        assert!(!edit_path(dir.path()).exists());
+    }
 }
 
 #[test]

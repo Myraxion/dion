@@ -375,7 +375,7 @@ fn check_link_entry(directory: &Path, link: &Path, target_parent: &Path, is_dir:
                     serde_json::json!({"entries":[
                         {"name":"child", "comment":"inside", "extension":"none"},
                         {"name":"nested\\deep", "comment":"nested", "extension":"none"},
-                    ]})
+                    ], "errors": []})
                 );
             } else {
                 let text = String::from_utf8(result.stdout).unwrap();

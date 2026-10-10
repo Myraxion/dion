@@ -101,7 +101,7 @@ fn tree_json_is_the_ordinary_recursive_list_without_supporting_nodes() {
             {"name":"z", "comment":"parent", "extension":"none"},
             {"name":"child\\middle\\deep\\empty", "comment":"", "extension":"none"},
             {"name":"child\\middle\\deep\\other", "comment":"unknown\\n", "extension":"unknown"},
-        ]})
+        ], "errors": []})
     );
     for options in [vec!["--tree"], vec!["--tree", "-r"]] {
         let mut args = vec!["--json", "list"];
@@ -212,7 +212,7 @@ fn recursive_list_emits_parent_records_then_naturally_ordered_subtrees_in_all_mo
         {"name":"dir2\\orphan", "comment":"first\nsecond", "extension":"tc"},
         {"name":"dir2\\middle\\deep\\lost", "comment":"literal\\n", "extension":"unknown"},
         {"name":"dir10\\file", "comment":"last", "extension":"none"},
-    ]});
+    ], "errors": []});
     for option in ["--recursive", "-r"] {
         for long in [false, true] {
             let mut args = vec!["list", option, "--json"];
@@ -292,7 +292,7 @@ fn directories_precede_files_in_natural_order_including_orphans() {
 }
 
 #[test]
-fn later_recursive_description_errors_leave_stdout_empty_in_every_mode() {
+fn recursive_description_errors_preserve_other_records_in_every_mode() {
     let directory = tempfile::tempdir().unwrap();
     fs::create_dir(directory.path().join("dir2")).unwrap();
     fs::create_dir(directory.path().join("dir10")).unwrap();
@@ -328,14 +328,23 @@ fn later_recursive_description_errors_leave_stdout_empty_in_every_mode() {
             args.extend(options);
             let result = list(directory.path(), &args);
             assert_eq!(result.status.code(), Some(1));
-            assert!(result.stdout.is_empty());
+            assert!(result.stderr.is_empty());
             if args.contains(&"--json") {
-                let error: serde_json::Value = serde_json::from_slice(&result.stderr).unwrap();
-                assert_eq!(error["error"]["code"], code);
-                assert_eq!(error["error"]["file"], ".\\dir10\\descript.ion");
-                assert_eq!(error["error"]["line"], serde_json::json!(line));
+                let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+                assert_eq!(value["entries"][0]["name"], "parent");
+                assert_eq!(value["entries"][1]["name"], "dir2\\child");
+                assert_eq!(
+                    value["entries"].as_array().unwrap().len(),
+                    if line.is_some() { 3 } else { 2 }
+                );
+                assert_eq!(value["errors"].as_array().unwrap().len(), 1);
+                assert_eq!(value["errors"][0]["code"], code);
+                assert_eq!(value["errors"][0]["file"], ".\\dir10\\descript.ion");
+                assert_eq!(value["errors"][0]["line"], serde_json::json!(line));
             } else {
-                let text = String::from_utf8(result.stderr).unwrap();
+                let text = String::from_utf8(result.stdout).unwrap();
+                assert!(text.find("parent").unwrap() < text.find("错误（1）：").unwrap());
+                assert!(text.contains("child"));
                 assert!(text.contains(code));
                 assert!(text.contains("dir10\\descript.ion"));
             }
@@ -346,7 +355,7 @@ fn later_recursive_description_errors_leave_stdout_empty_in_every_mode() {
 
 #[cfg(windows)]
 #[test]
-fn a_later_inaccessible_directory_fails_even_without_a_description_file() {
+fn an_inaccessible_child_is_skipped_and_other_directories_are_visited() {
     let directory = tempfile::tempdir().unwrap();
     fs::write(
         directory.path().join("descript.ion"),
@@ -355,6 +364,13 @@ fn a_later_inaccessible_directory_fails_even_without_a_description_file() {
     .unwrap();
     let child = directory.path().join("child");
     fs::create_dir(&child).unwrap();
+    fs::write(child.join("descript.ion"), b"\xef\xbb\xbfhidden skipped").unwrap();
+    fs::create_dir(directory.path().join("later")).unwrap();
+    fs::write(
+        directory.path().join("later/descript.ion"),
+        b"\xef\xbb\xbfafter visited",
+    )
+    .unwrap();
     // Deny directory enumeration, while leaving file reads and ACL restoration allowed.
     let script = "$ErrorActionPreference='Stop'; $p=$env:DION_TEST_DIRECTORY; $acl=Get-Acl -LiteralPath $p; $rule=[Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.WindowsIdentity]::GetCurrent().User, 'ListDirectory', 'Deny'); $acl.AddAccessRule($rule); Set-Acl -LiteralPath $p -AclObject $acl";
     let acl = Command::new("powershell.exe")
@@ -374,6 +390,7 @@ fn a_later_inaccessible_directory_fails_even_without_a_description_file() {
     .iter()
     .map(|args| list(directory.path(), args))
     .collect();
+    let start = list(directory.path(), &["list", "child", "--json"]);
     let restore = Command::new("powershell.exe")
         .args([
             "-NoProfile",
@@ -386,14 +403,20 @@ fn a_later_inaccessible_directory_fails_even_without_a_description_file() {
         .output()
         .unwrap();
     assert!(restore.status.success(), "{:?}", restore.stderr);
+    assert_eq!(start.status.code(), Some(1));
+    assert!(start.stdout.is_empty());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&start.stderr).unwrap()["error"]["code"],
+        "io_error"
+    );
     for result in results {
         assert_eq!(result.status.code(), Some(1));
-        assert!(result.stdout.is_empty());
-        assert!(
-            String::from_utf8(result.stderr)
-                .unwrap()
-                .contains("io_error")
-        );
+        assert!(result.stderr.is_empty());
+        let text = String::from_utf8(result.stdout).unwrap();
+        assert!(text.contains("parent"));
+        assert!(text.contains("after"));
+        assert!(text.contains("io_error"));
+        assert!(!text.contains("hidden"));
     }
 }
 
@@ -452,11 +475,10 @@ fn an_existing_zero_byte_file_is_an_encoding_error_not_an_empty_list() {
     fs::write(directory.path().join("descript.ion"), b"").unwrap();
     let result = list(directory.path(), &["list", "--json"]);
     assert_eq!(result.status.code(), Some(1));
-    assert!(result.stdout.is_empty());
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&result.stderr).unwrap()["error"]["code"],
-        "invalid_encoding"
-    );
+    assert!(result.stderr.is_empty());
+    let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(value["entries"], serde_json::json!([]));
+    assert_eq!(value["errors"][0]["code"], "invalid_encoding");
 }
 
 #[test]
@@ -605,7 +627,7 @@ fn default_directory_lists_all_records_in_natural_order_with_decoded_bodies() {
             {"name": "orphan", "comment": "normal\\n", "extension": "unknown"},
             {"name": "zeta", "comment": "literal\\n", "extension": "none"},
             {"name": "照片 😀.txt", "comment": "first\n  second\n", "extension": "tc"}
-        ]})
+        ], "errors": []})
     );
     assert_eq!(
         fs::read(directory.path().join("descript.ion")).unwrap(),
@@ -654,7 +676,7 @@ fn missing_description_and_header_only_files_are_successful_empty_lists() {
         }
         let result = list(directory.path(), &["--json", "list", "."]);
         assert_eq!(result.status.code(), Some(0));
-        assert_eq!(result.stdout, b"{\"entries\":[]}\n");
+        assert_eq!(result.stdout, b"{\"entries\":[],\"errors\":[]}\n");
         assert!(result.stderr.is_empty());
         let result = list(directory.path(), &["list"]);
         assert_eq!(result.status.code(), Some(0));
@@ -664,7 +686,7 @@ fn missing_description_and_header_only_files_are_successful_empty_lists() {
 }
 
 #[test]
-fn late_bad_records_fail_the_whole_list_in_text_and_json() {
+fn bad_records_are_skipped_without_losing_records_before_or_after_them() {
     let directory = tempfile::tempdir().unwrap();
     for (bad, code) in [
         (b"bad \xff".to_vec(), "invalid_encoding"),
@@ -678,6 +700,7 @@ fn late_bad_records_fail_the_whole_list_in_text_and_json() {
         let mut bytes =
             b"\xef\xbb\xbf\r\nfirst ok\r\nsecond multiline\\nbody\x04\xc3\x82\n".to_vec();
         bytes.extend(bad);
+        bytes.extend(b"\r\nthird later");
         fs::write(directory.path().join("descript.ion"), &bytes).unwrap();
         for args in [
             vec!["list"],
@@ -689,14 +712,24 @@ fn late_bad_records_fail_the_whole_list_in_text_and_json() {
         ] {
             let result = list(directory.path(), &args);
             assert_eq!(result.status.code(), Some(1));
-            assert!(result.stdout.is_empty());
+            assert!(result.stderr.is_empty());
             if args.contains(&"--json") {
-                let error: serde_json::Value = serde_json::from_slice(&result.stderr).unwrap();
-                assert_eq!(error["error"]["code"], code);
-                assert_eq!(error["error"]["file"], ".\\descript.ion");
-                assert_eq!(error["error"]["line"], 4);
+                let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+                assert_eq!(
+                    value["entries"],
+                    serde_json::json!([
+                        {"name":"first", "comment":"ok", "extension":"none"},
+                        {"name":"second", "comment":"multiline\nbody", "extension":"tc"},
+                        {"name":"third", "comment":"later", "extension":"none"},
+                    ])
+                );
+                assert_eq!(value["errors"].as_array().unwrap().len(), 1);
+                assert_eq!(value["errors"][0]["code"], code);
+                assert_eq!(value["errors"][0]["file"], ".\\descript.ion");
+                assert_eq!(value["errors"][0]["line"], 4);
             } else {
-                let error = String::from_utf8(result.stderr).unwrap();
+                let error = String::from_utf8(result.stdout).unwrap();
+                assert!(error.find("third").unwrap() < error.find("错误（1）：").unwrap());
                 assert!(error.contains(code));
                 assert!(error.contains("descript.ion"));
                 assert!(error.contains("line 4"));
@@ -710,11 +743,10 @@ fn late_bad_records_fail_the_whole_list_in_text_and_json() {
 }
 
 #[test]
-fn inaccessible_directories_and_description_files_are_operation_errors() {
+fn invalid_starting_directories_are_fatal_errors() {
     let directory = tempfile::tempdir().unwrap();
     fs::write(directory.path().join("file"), b"not a directory").unwrap();
-    fs::create_dir(directory.path().join("descript.ion")).unwrap();
-    for path in ["missing", "file", "."] {
+    for path in ["missing", "file"] {
         let result = list(directory.path(), &["list", path, "--json"]);
         assert_eq!(result.status.code(), Some(1));
         assert!(result.stdout.is_empty());
@@ -723,6 +755,125 @@ fn inaccessible_directories_and_description_files_are_operation_errors() {
             "io_error"
         );
     }
+}
+
+#[test]
+fn multiple_bad_lines_are_reported_in_physical_order_after_the_list() {
+    let directory = tempfile::tempdir().unwrap();
+    let bytes = b"\xef\xbb\xbf\r\n\"unclosed\rfirst kept\nFIRST duplicate\r\nbad \xff\n\"\" empty\n\"quoted\"tail\nafter readable";
+    let file = directory.path().join("descript.ion");
+    fs::write(&file, bytes).unwrap();
+    let expected_codes = [
+        "invalid_format",
+        "invalid_format",
+        "invalid_encoding",
+        "invalid_format",
+        "invalid_format",
+    ];
+    for options in [
+        vec![],
+        vec!["-l"],
+        vec!["--tree"],
+        vec!["--json"],
+        vec!["-l", "--json"],
+        vec!["--tree", "--json"],
+    ] {
+        let mut args = vec!["list"];
+        args.extend(options);
+        let result = list(directory.path(), &args);
+        assert_eq!(result.status.code(), Some(1));
+        assert!(result.stderr.is_empty());
+        if args.contains(&"--json") {
+            let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+            assert_eq!(
+                value["entries"],
+                serde_json::json!([
+                    {"name":"after", "comment":"readable", "extension":"none"},
+                    {"name":"first", "comment":"kept", "extension":"none"},
+                ])
+            );
+            let errors = value["errors"].as_array().unwrap();
+            assert_eq!(errors.len(), 5);
+            for (error, (code, line)) in errors
+                .iter()
+                .zip(expected_codes.into_iter().zip([2, 4, 5, 6, 7]))
+            {
+                assert_eq!(error["code"], code);
+                assert_eq!(error["line"], line);
+                assert_eq!(error["file"], ".\\descript.ion");
+            }
+        } else {
+            let text = String::from_utf8(result.stdout).unwrap();
+            let (entries, errors) = text.split_once("错误（5）：\n").unwrap();
+            assert!(entries.contains("readable"));
+            assert!(entries.contains("kept"));
+            assert!(!entries.contains("duplicate"));
+            let lines: Vec<_> = errors.lines().collect();
+            assert_eq!(lines.len(), 5);
+            for (error, (code, line)) in lines
+                .iter()
+                .zip(expected_codes.into_iter().zip([2, 4, 5, 6, 7]))
+            {
+                assert!(error.starts_with(code));
+                assert!(error.ends_with(&format!(" at line {line}")));
+            }
+        }
+        assert_eq!(fs::read(&file).unwrap(), bytes);
+    }
+}
+
+#[test]
+fn skipped_description_files_do_not_hide_descendants_and_errors_follow_traversal_order() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::create_dir_all(directory.path().join("dir2/deep")).unwrap();
+    fs::create_dir_all(directory.path().join("dir10/descript.ion")).unwrap();
+    fs::create_dir(directory.path().join("dir10/deep")).unwrap();
+    fs::write(
+        directory.path().join("descript.ion"),
+        b"\xef\xbb\xbfparent kept",
+    )
+    .unwrap();
+    fs::write(directory.path().join("dir2/descript.ion"), b"missing BOM").unwrap();
+    fs::write(
+        directory.path().join("dir2/deep/descript.ion"),
+        b"\xef\xbb\xbfchild kept\n\"unclosed",
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("dir10/deep/descript.ion"),
+        b"\xef\xbb\xbfafter kept",
+    )
+    .unwrap();
+    let recursive = list(directory.path(), &["list", "-r", "--json"]);
+    assert_eq!(recursive.status.code(), Some(1));
+    assert!(recursive.stderr.is_empty());
+    let value: serde_json::Value = serde_json::from_slice(&recursive.stdout).unwrap();
+    assert_eq!(
+        value["entries"],
+        serde_json::json!([
+            {"name":"parent", "comment":"kept", "extension":"none"},
+            {"name":"dir2\\deep\\child", "comment":"kept", "extension":"none"},
+            {"name":"dir10\\deep\\after", "comment":"kept", "extension":"none"},
+        ])
+    );
+    let errors = value["errors"].as_array().unwrap();
+    assert_eq!(errors.len(), 3);
+    assert_eq!(errors[0]["code"], "invalid_encoding");
+    assert_eq!(errors[0]["file"], ".\\dir2\\descript.ion");
+    assert!(errors[0].get("line").is_none());
+    assert_eq!(errors[1]["code"], "invalid_format");
+    assert_eq!(errors[1]["line"], 2);
+    assert_eq!(errors[2]["code"], "io_error");
+    assert_eq!(errors[2]["file"], ".\\dir10\\descript.ion");
+    let tree = list(directory.path(), &["list", "--tree", "--json"]);
+    assert_eq!(tree.status.code(), Some(1));
+    assert_eq!(tree.stdout, recursive.stdout);
+    let direct = list(directory.path(), &["list", "dir10", "--json"]);
+    assert_eq!(direct.status.code(), Some(1));
+    assert!(direct.stderr.is_empty());
+    let value: serde_json::Value = serde_json::from_slice(&direct.stdout).unwrap();
+    assert_eq!(value["entries"], serde_json::json!([]));
+    assert_eq!(value["errors"][0]["code"], "io_error");
 }
 
 #[test]
@@ -756,13 +907,13 @@ fn list_rejects_extra_arguments_and_options_and_supports_directory_after_separat
     }
     let result = list(directory.path(), &["--json", "list", "--", "--json"]);
     assert_eq!(result.status.code(), Some(0));
-    assert_eq!(result.stdout, b"{\"entries\":[]}\n");
+    assert_eq!(result.stdout, b"{\"entries\":[],\"errors\":[]}\n");
     assert!(result.stderr.is_empty());
 }
 
 #[cfg(windows)]
 #[test]
-fn locked_description_is_an_operation_error() {
+fn locked_description_is_reported_and_descendants_are_still_visited() {
     use std::os::windows::fs::OpenOptionsExt;
     let directory = tempfile::tempdir().unwrap();
     fs::write(
@@ -770,16 +921,22 @@ fn locked_description_is_an_operation_error() {
         b"\xef\xbb\xbffirst ok",
     )
     .unwrap();
+    fs::create_dir(directory.path().join("child")).unwrap();
+    fs::write(
+        directory.path().join("child/descript.ion"),
+        b"\xef\xbb\xbfafter visited",
+    )
+    .unwrap();
     let _locked = fs::OpenOptions::new()
         .read(true)
         .share_mode(0)
         .open(directory.path().join("descript.ion"))
         .unwrap();
-    let result = list(directory.path(), &["list", "--json"]);
+    let result = list(directory.path(), &["list", "-r", "--json"]);
     assert_eq!(result.status.code(), Some(1));
-    assert!(result.stdout.is_empty());
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&result.stderr).unwrap()["error"]["code"],
-        "io_error"
-    );
+    assert!(result.stderr.is_empty());
+    let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(value["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(value["entries"][0]["name"], "child\\after");
+    assert_eq!(value["errors"][0]["code"], "io_error");
 }

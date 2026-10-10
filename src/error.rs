@@ -1,6 +1,6 @@
 use serde::Serialize;
 use std::{
-    io,
+    io::{self, Write},
     path::{Path, PathBuf},
 };
 
@@ -17,6 +17,17 @@ pub struct Error {
 }
 
 impl Error {
+    pub fn write_text(&self, output: &mut impl Write) -> io::Result<()> {
+        write!(output, "{}: {}", self.code, self.message)?;
+        if let Some(file) = &self.file {
+            write!(output, " ({})", file.display())?;
+        }
+        if let Some(line) = self.line {
+            write!(output, " at line {line}")?;
+        }
+        writeln!(output)
+    }
+
     pub fn new(code: &'static str, message: impl Into<String>, exit_code: u8) -> Self {
         Self {
             code,

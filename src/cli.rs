@@ -1,4 +1,4 @@
-use crate::{comment, editor, error::Error, help, listing, storage};
+use crate::{comment, editor, error::Error, help, listing, name::Name, storage};
 use std::{
     env,
     ffi::OsString,
@@ -14,20 +14,13 @@ pub fn run() -> ExitCode {
         .take_while(|arg| *arg != "--")
         .any(|arg| arg == "--json");
     match parse_args(&args).and_then(|args| execute(&args, json)) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => ExitCode::from(code),
         Err(error) => {
             let mut stderr = io::stderr().lock();
             if json {
                 let _ = write_json(&mut stderr, &serde_json::json!({ "error": error }));
             } else {
-                let _ = write!(stderr, "{}: {}", error.code, error.message);
-                if let Some(file) = &error.file {
-                    let _ = write!(stderr, " ({})", file.display());
-                }
-                if let Some(line) = error.line {
-                    let _ = write!(stderr, " at line {line}");
-                }
-                let _ = writeln!(stderr);
+                let _ = error.write_text(&mut stderr);
             }
             ExitCode::from(error.exit_code)
         }
@@ -116,7 +109,7 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
     })
 }
 
-fn execute(arguments: &Arguments, json: bool) -> Result<(), Error> {
+fn execute(arguments: &Arguments, json: bool) -> Result<u8, Error> {
     let args = &arguments.positional;
     if arguments.help || args.first().is_some_and(|arg| arg == "help") {
         let topic = if args.first().is_some_and(|arg| arg == "help") {
@@ -139,6 +132,7 @@ fn execute(arguments: &Arguments, json: bool) -> Result<(), Error> {
         return io::stdout()
             .lock()
             .write_all(text.as_bytes())
+            .map(|()| 0)
             .map_err(|error| Error::new("io_error", error.to_string(), 1));
     }
     if (arguments.long || arguments.recursive || arguments.tree)
@@ -151,8 +145,10 @@ fn execute(arguments: &Arguments, json: bool) -> Result<(), Error> {
         ));
     }
     match args.first().and_then(|arg| arg.to_str()) {
-        Some("get") if args.len() == 2 && arguments.source.is_none() => get(args, json),
-        Some("remove") if args.len() == 2 && arguments.source.is_none() => remove(args, json),
+        Some("get") if args.len() == 2 && arguments.source.is_none() => get(args, json).map(|()| 0),
+        Some("remove") if args.len() == 2 && arguments.source.is_none() => {
+            remove(args, json).map(|()| 0)
+        }
         Some("list") if args.len() <= 2 && arguments.source.is_none() => list(
             args,
             json,
@@ -161,7 +157,7 @@ fn execute(arguments: &Arguments, json: bool) -> Result<(), Error> {
             arguments.tree,
         ),
         Some("set") if args.len() == if arguments.source.is_some() { 2 } else { 3 } => {
-            set(args, arguments.source.as_ref(), json)
+            set(args, arguments.source.as_ref(), json).map(|()| 0)
         }
         _ => Err(Error::new(
             "invalid_argument",
@@ -317,10 +313,10 @@ fn edit_comment(path: &std::path::Path) -> Result<bool, Error> {
         .transpose()
         .map_err(|error| error.at_file(&file))?
         .unwrap_or_default();
-    let key = name.to_lowercase();
+    let key = Name::new(name);
     let prefill = records
         .iter()
-        .find(|record| record.name.to_lowercase() == key)
+        .find(|record| key.matches(record.name))
         .map_or("", |record| record.comment.as_ref());
     let text = editor::create(prefill)?;
     let result = (|| {
@@ -360,26 +356,53 @@ fn list(
     long: bool,
     recursive: bool,
     tree: bool,
-) -> Result<(), Error> {
+) -> Result<u8, Error> {
     let directory = normalize_verbatim_path(
         args.get(1)
             .map_or_else(|| PathBuf::from("."), PathBuf::from),
     );
     if tree && !json {
-        let nodes = listing::collect_tree(&directory)?;
-        return listing::tree(&mut io::stdout().lock(), &nodes)
-            .map_err(|error| Error::new("io_error", error.to_string(), 1));
+        let (nodes, errors) = listing::collect_tree(&directory)?;
+        let mut output = io::stdout().lock();
+        listing::tree(&mut output, &nodes)
+            .map_err(|error| Error::new("io_error", error.to_string(), 1))?;
+        return finish_list(&mut output, &errors, !nodes.is_empty());
     }
-    let entries = listing::collect(&directory, recursive || tree)?;
+    let (entries, errors) = listing::collect(&directory, recursive || tree)?;
     let mut output = io::stdout().lock();
     let result = if json {
-        write_json(&mut output, &serde_json::json!({ "entries": entries }))
+        write_json(
+            &mut output,
+            &serde_json::json!({ "entries": entries, "errors": errors }),
+        )
     } else if long {
         listing::long(&mut output, &entries)
     } else {
         listing::columns(&mut output, &entries)
     };
-    result.map_err(|error| Error::new("io_error", error.to_string(), 1))
+    result.map_err(|error| Error::new("io_error", error.to_string(), 1))?;
+    if json {
+        Ok(u8::from(!errors.is_empty()))
+    } else {
+        finish_list(&mut output, &errors, !entries.is_empty())
+    }
+}
+
+fn finish_list(output: &mut impl Write, errors: &[Error], has_entries: bool) -> Result<u8, Error> {
+    let result = (|| {
+        if !errors.is_empty() {
+            if has_entries {
+                writeln!(output)?;
+            }
+            writeln!(output, "错误（{}）：", errors.len())?;
+            for error in errors {
+                error.write_text(output)?;
+            }
+        }
+        Ok::<(), io::Error>(())
+    })();
+    result.map_err(|error| Error::new("io_error", error.to_string(), 1))?;
+    Ok(u8::from(!errors.is_empty()))
 }
 
 fn get(args: &[OsString], json: bool) -> Result<(), Error> {
@@ -395,10 +418,10 @@ fn get(args: &[OsString], json: bool) -> Result<(), Error> {
     let not_found = || Error::new("not_found", "Comment not found", 3).at_file(&file);
     let bytes = storage::read(&file)?.ok_or_else(not_found)?;
     let records = comment::parse(&bytes).map_err(|error| error.at_file(&file))?;
-    let key = name.to_lowercase();
+    let key = Name::new(name);
     let record = records
         .iter()
-        .find(|record| record.name.to_lowercase() == key)
+        .find(|record| key.matches(record.name))
         .ok_or_else(not_found)?;
     let mut output = io::stdout().lock();
     let result = if json {

@@ -101,7 +101,8 @@ fn tc_root_fixture_decodes_single_line_spaced_unicode_and_multiline() {
                 { "name": "父文件夹1", "comment": "111测试", "extension": "none" },
                 { "name": "父文件夹1 - 副本", "comment": "222测试", "extension": "none" },
                 { "name": "父文件夹2", "comment": "测试测试\n。", "extension": "tc" }
-            ]
+            ],
+            "errors": []
         })
     );
 }
@@ -458,7 +459,7 @@ fn policy_exact_4096_byte_boundary_includes_terminator_and_tc_extension() {
 
 #[test]
 fn policy_case_insensitive_matching_and_duplicate_conflict() {
-    // 名称匹配固定不区分大小写，大小写重复记录视为格式冲突（拒绝整次操作）
+    // 名称匹配固定不区分大小写，大小写重复记录视为格式冲突。
     let dir = fixture(b"\xef\xbb\xbf\r\nfile.txt \xe5\xa4\x87\xe6\xb3\xa8\r\n");
 
     // 大写查询能正确匹配小写记录
@@ -466,10 +467,16 @@ fn policy_case_insensitive_matching_and_duplicate_conflict() {
     assert_eq!(res.status.code(), Some(0));
     assert_eq!(json_out(&res)["name"], "file.txt");
 
-    // 包含仅大小写不同的重复记录（冲突），整次操作报错且不修改
+    // list 保留第一条，跳过重复记录，报告冲突且不修改。
     let conflict_raw = b"\xef\xbb\xbf\r\nfile.txt \xe5\xa4\x87\xe6\xb3\xa81\r\nFILE.TXT \xe5\xa4\x87\xe6\xb3\xa82\r\n";
     let dir_conflict = fixture(conflict_raw);
     let res = dion(dir_conflict.path(), &["list", "--json"]);
     assert_eq!(res.status.code(), Some(1));
-    assert_eq!(json_err(&res)["error"]["code"], "invalid_format");
+    assert_eq!(json_out(&res)["errors"][0]["code"], "invalid_format");
+    assert_eq!(json_out(&res)["entries"].as_array().unwrap().len(), 1);
+    assert!(res.stderr.is_empty());
+    assert_eq!(
+        fs::read(dir_conflict.path().join("descript.ion")).unwrap(),
+        conflict_raw
+    );
 }

@@ -2,6 +2,10 @@
 
 状态：两轮决策及测试边界已确认，已汇总为[增强规格](list-edit-spec.md)并发布为 [Issue #12](https://github.com/Myraxion/dion/issues/12)；本文保留确认时的设计示例与调研背景。实施进度见该 Issue，当前已实现行为以[行为契约](spec.md)为准。
 
+2026-10-09 后续变更：`list` 改为默认跳过错误并汇总诊断，JSON 增加 `errors` 数组；有跳过错误时输出有效记录并返回退出码 1，起始目录无法访问仍直接失败。下文原有的整次查询失败设计及 JSON 字段不变规则已由[当前契约](spec.md#命令与路径)取代。
+
+2026-10-10 后续变更：下文 Unicode 小写名称匹配和重复检测由[Windows 原生名称比较设计](windows-name-comparison-design.md)取代，列表目录识别及树节点合并同步使用该比较器；自然展示排序继续使用 `StrCmpLogicalW`。
+
 ## 已确认的需求
 
 - `list` 文本有三种展示模式：默认双栏、`--long`（`-l`）单栏、`--tree` 树状；`--tree` 与 `--long` 互斥。全部显示完整备注。

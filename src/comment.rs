@@ -1,5 +1,5 @@
-use crate::error::Error;
-use std::{borrow::Cow, collections::HashSet, ops::Range};
+use crate::{error::Error, name::Name};
+use std::{borrow::Cow, collections::BTreeSet, ops::Range};
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -21,99 +21,132 @@ pub struct Record<'a> {
 }
 
 pub fn parse(bytes: &[u8]) -> Result<Vec<Record<'_>>, Error> {
+    records(bytes)?.collect()
+}
+
+/// Keeps valid records and reports each bad physical line independently.
+pub fn parse_for_list(bytes: &[u8]) -> Result<(Vec<Record<'_>>, Vec<Error>), Error> {
+    let mut valid = Vec::new();
+    let mut errors = Vec::new();
+    for record in records(bytes)? {
+        match record {
+            Ok(record) => valid.push(record),
+            Err(error) => errors.push(error),
+        }
+    }
+    Ok((valid, errors))
+}
+
+fn records(bytes: &[u8]) -> Result<impl Iterator<Item = Result<Record<'_>, Error>>, Error> {
     let body = bytes
         .strip_prefix(b"\xef\xbb\xbf")
         .ok_or_else(|| Error::new("invalid_encoding", "Missing UTF-8 BOM", 1))?;
-    let mut records = Vec::new();
-    let mut names = HashSet::new();
+    let mut names = BTreeSet::new();
     let mut remaining = body;
     let mut line_number = 0;
-    while !remaining.is_empty() {
-        line_number += 1;
-        let end = remaining
-            .iter()
-            .position(|byte| matches!(byte, b'\r' | b'\n'))
-            .unwrap_or(remaining.len());
-        let line = std::str::from_utf8(&remaining[..end])
-            .map_err(|_| at_line("invalid_encoding", "Record is not valid UTF-8", line_number))?;
-        let terminator = if remaining[end..].starts_with(b"\r\n") {
-            2
-        } else if end < remaining.len() {
-            1
-        } else {
-            0
-        };
-        if end + terminator > 4096 {
-            return Err(at_line(
-                "invalid_format",
-                "Physical record exceeds 4096 bytes",
+    Ok(std::iter::from_fn(move || {
+        loop {
+            if remaining.is_empty() {
+                return None;
+            }
+            line_number += 1;
+            let end = remaining
+                .iter()
+                .position(|byte| matches!(byte, b'\r' | b'\n'))
+                .unwrap_or(remaining.len());
+            let terminator = if remaining[end..].starts_with(b"\r\n") {
+                2
+            } else if end < remaining.len() {
+                1
+            } else {
+                0
+            };
+            let start = bytes.len() - remaining.len();
+            let line = &remaining[..end];
+            remaining = &remaining[end + terminator..];
+            if line.is_empty() {
+                continue;
+            }
+            return Some(parse_record(
+                line,
+                start..start + end + terminator,
                 line_number,
+                &mut names,
             ));
         }
-        let start = bytes.len() - remaining.len();
-        remaining = &remaining[end + terminator..];
-        if line.is_empty() {
-            continue;
-        }
-        let (name, comment) = if let Some(quoted) = line.strip_prefix('"') {
-            let close = quoted
-                .find('"')
-                .ok_or_else(|| at_line("invalid_format", "Unclosed name quote", line_number))?;
-            let tail = &quoted[close + 1..];
-            (
-                &quoted[..close],
-                if tail.is_empty() {
-                    ""
-                } else {
-                    tail.strip_prefix(' ').ok_or_else(|| {
-                        at_line(
-                            "invalid_format",
-                            "Expected a space after quoted name",
-                            line_number,
-                        )
-                    })?
-                },
-            )
-        } else {
-            line.split_once(' ').unwrap_or((line, ""))
-        };
-        if name.is_empty() {
-            return Err(at_line(
-                "invalid_format",
-                "Record name is empty",
-                line_number,
-            ));
-        }
-        if !names.insert(name.to_lowercase()) {
-            return Err(at_line(
-                "invalid_format",
-                "Duplicate record name (case insensitive)",
-                line_number,
-            ));
-        }
-        let (comment, extension) = match comment.split_once('\u{4}') {
-            Some((body, "\u{c2}")) => (Cow::Owned(decode_tc(body)), Extension::Tc),
-            Some((body, _)) => (Cow::Borrowed(body), Extension::Unknown),
-            None => (Cow::Borrowed(comment), Extension::None),
-        };
-        records.push(Record {
-            name,
-            comment,
-            extension,
-            range: start..start + end + terminator,
-            line: line_number,
-        });
+    }))
+}
+
+fn parse_record<'a>(
+    bytes: &'a [u8],
+    range: Range<usize>,
+    line_number: usize,
+    names: &mut BTreeSet<Name>,
+) -> Result<Record<'a>, Error> {
+    let line = std::str::from_utf8(bytes)
+        .map_err(|_| at_line("invalid_encoding", "Record is not valid UTF-8", line_number))?;
+    if range.len() > 4096 {
+        return Err(at_line(
+            "invalid_format",
+            "Physical record exceeds 4096 bytes",
+            line_number,
+        ));
     }
-    Ok(records)
+    let (name, comment) = if let Some(quoted) = line.strip_prefix('"') {
+        let close = quoted
+            .find('"')
+            .ok_or_else(|| at_line("invalid_format", "Unclosed name quote", line_number))?;
+        let tail = &quoted[close + 1..];
+        (
+            &quoted[..close],
+            if tail.is_empty() {
+                ""
+            } else {
+                tail.strip_prefix(' ').ok_or_else(|| {
+                    at_line(
+                        "invalid_format",
+                        "Expected a space after quoted name",
+                        line_number,
+                    )
+                })?
+            },
+        )
+    } else {
+        line.split_once(' ').unwrap_or((line, ""))
+    };
+    if name.is_empty() {
+        return Err(at_line(
+            "invalid_format",
+            "Record name is empty",
+            line_number,
+        ));
+    }
+    if !names.insert(Name::new(name)) {
+        return Err(at_line(
+            "invalid_format",
+            "Duplicate record name (case insensitive)",
+            line_number,
+        ));
+    }
+    let (comment, extension) = match comment.split_once('\u{4}') {
+        Some((body, "\u{c2}")) => (Cow::Owned(decode_tc(body)), Extension::Tc),
+        Some((body, _)) => (Cow::Borrowed(body), Extension::Unknown),
+        None => (Cow::Borrowed(comment), Extension::None),
+    };
+    Ok(Record {
+        name,
+        comment,
+        extension,
+        range,
+        line: line_number,
+    })
 }
 
 pub fn set(original: Option<&[u8]>, name: &str, body: &str) -> Result<Option<Vec<u8>>, Error> {
     let bytes = original.unwrap_or(b"\xef\xbb\xbf\r\n");
     let records = parse(bytes)?;
-    let key = name.to_lowercase();
-    let target = records
-        .iter()
-        .find(|record| record.name.to_lowercase() == key);
+    let key = Name::new(name);
+    let target = records.iter().find(|record| key.matches(record.name));
     if let Some(record) = target {
         if matches!(record.extension, Extension::Unknown) {
             return Err(Error::new(
@@ -178,11 +211,8 @@ pub enum Removal {
 
 pub fn remove(bytes: &[u8], name: &str) -> Result<Removal, Error> {
     let records = parse(bytes)?;
-    let key = name.to_lowercase();
-    let Some(target) = records
-        .iter()
-        .find(|record| record.name.to_lowercase() == key)
-    else {
+    let key = Name::new(name);
+    let Some(target) = records.iter().find(|record| key.matches(record.name)) else {
         return Ok(Removal::Unchanged);
     };
     if records.len() == 1 {
