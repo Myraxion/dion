@@ -115,6 +115,58 @@ fn colored_names_restore_default_foreground_before_unmodified_comment_controls()
 }
 
 #[test]
+fn color_always_covers_supporting_nodes_and_orphans_without_coloring_errors() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::create_dir_all(directory.path().join("folder/helper/deep")).unwrap();
+    let mut root = b"\xef\xbb\xbffolder directory note\r\norphan lost note\r\n".to_vec();
+    root.extend_from_slice("raw\u{1b}[31m raw escape name\r\n".as_bytes());
+    root.extend_from_slice(b"bad \xff");
+    fs::write(directory.path().join("descript.ion"), root).unwrap();
+    fs::write(
+        directory.path().join("folder/helper/deep/descript.ion"),
+        "\u{feff}absent deep note",
+    )
+    .unwrap();
+
+    let result = list(directory.path(), &["list", "--tree", "--color", "always"]);
+    assert_eq!(result.status.code(), Some(1));
+    assert!(result.stderr.is_empty());
+    let text = String::from_utf8(result.stdout).unwrap();
+    for name in ["folder\\", "helper\\", "deep\\", "absent", "orphan"] {
+        assert!(
+            text.contains(&format!("\u{1b}[36m{name}\u{1b}[39m")),
+            "missing colored name {name:?}: {text:?}"
+        );
+    }
+    assert!(text.contains("\u{1b}[36mraw\u{1b}[31m\u{1b}[39m"));
+    let (_, errors) = text.split_once("错误（1）：\n").unwrap();
+    assert!(errors.contains("invalid_encoding"));
+    assert!(!errors.contains("\u{1b}["));
+}
+
+#[test]
+fn colored_wide_names_keep_multiline_alignment_and_empty_comments() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(
+        directory.path().join("descript.ion"),
+        "\u{feff}\"照片 😀\" first\\nsecond\u{4}\u{c2}\r\nempty \r\n",
+    )
+    .unwrap();
+
+    let result = list(directory.path(), &["list", "--color", "always"]);
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(
+        result.stdout,
+        concat!(
+            "\u{1b}[36mempty\u{1b}[39m    \n",
+            "\u{1b}[36m照片 😀\u{1b}[39m  first\n",
+            "         second\n",
+        )
+        .as_bytes()
+    );
+}
+
+#[test]
 fn tree_merges_directory_comments_and_prunes_unrelated_nodes_in_natural_order() {
     let directory = tempfile::tempdir().unwrap();
     for path in [

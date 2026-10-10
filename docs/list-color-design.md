@@ -49,6 +49,12 @@
 - 实施时同步更新行为契约、README 和命令帮助，执行 `scripts/check.ps1`，沿用现有单文件交付及体积要求。
 - 本次设计不引入分隔符、自动折行、内容截断、颜色主题或控制字符净化。
 
+### 实测状态
+
+- `scripts/check.ps1` 已通过：格式、Clippy、完整测试和 Release 构建。Release exe 为 509,952 字节。
+- 2026-10-10 在 Windows PTY 实测 `auto`：空 `NO_COLOR` 时名称显示青色并恢复备注默认颜色；非空 `NO_COLOR` 时输出纯文本。`--color always` 在双栏、单栏、树状模式及 JSON 分支另由真实 CLI 黑盒测试覆盖。
+- 浅色与深色终端背景下的人工对比，以及在终端句柄可检测但 VT 模式设置失败时触发 `auto` 回退，尚未实测。自动测试覆盖非终端、`NO_COLOR`、颜色模式解析和 `always` 输出；VT 启用失败分支在 Windows API 调用失败时走纯文本路径。
+
 ## 调研事实
 
 - `src/listing.rs` 的 `columns`、`long`、`tree` 集中负责三种文本布局；`src/cli.rs` 在渲染前分流 JSON。宽度基于原始名称的 Unicode 显示宽度，新增样式应在宽度计算后输出。
