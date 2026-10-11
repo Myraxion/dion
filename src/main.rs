@@ -6,6 +6,7 @@ mod everything;
 mod help;
 mod i18n;
 mod listing;
+mod modification;
 mod name;
 mod storage;
 mod terminal;

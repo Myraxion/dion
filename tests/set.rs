@@ -344,6 +344,33 @@ fn rejects_blank_and_reserved_input_without_creating_or_changing_files() {
 }
 
 #[test]
+fn body_and_target_errors_precede_description_format_errors() {
+    let original = b"missing BOM";
+    let directory = fixture(Some(original));
+    for (name, body, exit, code) in [
+        ("missing.txt", " ", 2, "invalid_argument"),
+        ("照片 😀.txt", " ", 2, "invalid_argument"),
+        ("missing.txt", "valid", 1, "io_error"),
+        ("照片 😀.txt", "valid", 1, "invalid_encoding"),
+    ] {
+        let error = rejected(&set(directory.path(), name, body, true), exit, code);
+        if code == "io_error" {
+            assert_eq!(
+                Path::new(error["error"]["file"].as_str().unwrap())
+                    .file_name()
+                    .unwrap(),
+                "missing.txt"
+            );
+        }
+        assert_eq!(
+            fs::read(directory.path().join("descript.ion")).unwrap(),
+            original
+        );
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 2);
+    }
+}
+
+#[test]
 fn multiline_argument_normalizes_breaks_and_roundtrips_tc_encoding() {
     let directory = fixture(None);
     changed(

@@ -240,6 +240,25 @@ fn all_commands_support_long_unicode_paths_and_orphan_records() {
 
 #[cfg(windows)]
 #[test]
+fn root_entry_errors_precede_comment_source_reads() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().ancestors().last().unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_dion"))
+        .current_dir(directory.path())
+        .args(["--json", "set"])
+        .arg(root)
+        .args(["--comment-file", "missing-body.txt"])
+        .output()
+        .unwrap();
+    assert_eq!(result.status.code(), Some(2));
+    assert!(result.stdout.is_empty());
+    let error: serde_json::Value = serde_json::from_slice(&result.stderr).unwrap();
+    assert_eq!(error["error"]["code"], "invalid_argument");
+    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+}
+
+#[cfg(windows)]
+#[test]
 fn roots_reject_entry_commands_before_accessing_disk() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory

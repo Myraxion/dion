@@ -1,7 +1,9 @@
 use crate::{
     comment,
     comment::Extension,
-    error::{Diagnostic, Error},
+    error::{Diagnostic, Error, LocalizedError},
+    everything,
+    i18n::Language,
     name::Name,
     storage,
 };
@@ -15,18 +17,125 @@ use std::{
 };
 use unicode_width::UnicodeWidthStr;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Format {
+    Columns,
+    Long,
+    Tree,
+}
+
+pub enum Source<'a> {
+    Scan,
+    Everything { instance: Option<&'a str> },
+}
+
+pub struct Options<'a> {
+    pub source: Source<'a>,
+    pub format: Format,
+    pub json: bool,
+    pub recursive: bool,
+    pub include_excluded: bool,
+}
+
+/// Collects before writing; skipped errors accompany the list and return status 1.
+/// Fatal query or output errors are returned to the caller for stderr reporting.
+pub fn list(
+    directory: &Path,
+    options: &Options<'_>,
+    output: &mut impl Write,
+    color: bool,
+    language: Language,
+) -> Result<u8, Error> {
+    let (collected, errors) = match &options.source {
+        Source::Scan => {
+            let mut errors = Vec::new();
+            let collected = collect_directory(
+                directory,
+                options.recursive || options.format == Format::Tree,
+                options.include_excluded,
+                &mut errors,
+            )?;
+            (collected, errors)
+        }
+        Source::Everything { instance } => {
+            let descriptions = everything::find_descriptions(directory, *instance)?;
+            collect_indexed_directory(directory, &descriptions, options.include_excluded)?
+        }
+    };
+    let result = if options.format == Format::Tree && !options.json {
+        let nodes = collected.into_tree();
+        tree(output, &nodes, color)
+            .and_then(|()| write_errors(output, &errors, !nodes.is_empty(), language))
+    } else {
+        // JSON always uses flat records, including when tree traversal was requested.
+        let mut entries = Vec::new();
+        collected.flatten("", &mut entries);
+        if options.json {
+            serde_json::to_writer(
+                &mut *output,
+                &ListOutput {
+                    entries: &entries,
+                    errors: errors
+                        .iter()
+                        .map(|error| error.localized(language))
+                        .collect(),
+                },
+            )
+            .map_err(io::Error::from)
+            .and_then(|()| output.write_all(b"\n"))
+        } else {
+            let result = if options.format == Format::Long {
+                long(output, &entries, color)
+            } else {
+                columns(output, &entries, color)
+            };
+            result.and_then(|()| write_errors(output, &errors, !entries.is_empty(), language))
+        }
+    };
+    result.map_err(|error| Error::new("io_error", error.to_string(), 1))?;
+    Ok(u8::from(!errors.is_empty()))
+}
+
 #[derive(serde::Serialize)]
-pub struct Entry {
-    pub name: String,
-    pub comment: String,
-    pub extension: Extension,
+struct ListOutput<'a> {
+    entries: &'a [Entry],
+    errors: Vec<LocalizedError<'a>>,
+}
+
+fn write_errors(
+    output: &mut impl Write,
+    errors: &[Error],
+    has_entries: bool,
+    language: Language,
+) -> io::Result<()> {
+    if !errors.is_empty() {
+        if has_entries {
+            writeln!(output)?;
+        }
+        if language.is_chinese() {
+            writeln!(output, "错误（{}）：", errors.len())?;
+        } else {
+            writeln!(output, "Errors ({}):", errors.len())?;
+        }
+        for error in errors {
+            error.write_text(output, language)?;
+        }
+    }
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct Entry {
+    name: String,
+    comment: String,
+    extension: Extension,
     #[serde(skip)]
-    pub directory: bool,
+    directory: bool,
     #[serde(skip)]
     name_utf16: Vec<u16>,
 }
 
-pub fn columns(output: &mut impl Write, entries: &[Entry], color: bool) -> io::Result<()> {
+fn columns(output: &mut impl Write, entries: &[Entry], color: bool) -> io::Result<()> {
     let width = entries
         .iter()
         .map(|entry| entry.name.width() + usize::from(entry.directory))
@@ -48,7 +157,7 @@ pub fn columns(output: &mut impl Write, entries: &[Entry], color: bool) -> io::R
     Ok(())
 }
 
-pub fn long(output: &mut impl Write, entries: &[Entry], color: bool) -> io::Result<()> {
+fn long(output: &mut impl Write, entries: &[Entry], color: bool) -> io::Result<()> {
     for entry in entries {
         write_name(
             output,
@@ -63,19 +172,6 @@ pub fn long(output: &mut impl Write, entries: &[Entry], color: bool) -> io::Resu
         writeln!(output)?;
     }
     Ok(())
-}
-
-/// Collects valid records and diagnostics before rendering.
-pub fn collect(
-    directory: &Path,
-    recursive: bool,
-    include_excluded: bool,
-) -> Result<(Vec<Entry>, Vec<Error>), Error> {
-    let mut entries = Vec::new();
-    let mut errors = Vec::new();
-    collect_directory(directory, recursive, include_excluded, &mut errors)?
-        .flatten("", &mut entries);
-    Ok((entries, errors))
 }
 
 struct Directory {
@@ -141,7 +237,7 @@ impl Directory {
     }
 }
 
-pub struct TreeNode {
+struct TreeNode {
     name: String,
     name_utf16: Vec<u16>,
     directory: bool,
@@ -149,39 +245,7 @@ pub struct TreeNode {
     children: Vec<TreeNode>,
 }
 
-/// Uses the same traversal and diagnostics as the ordinary recursive list.
-pub fn collect_tree(
-    directory: &Path,
-    include_excluded: bool,
-) -> Result<(Vec<TreeNode>, Vec<Error>), Error> {
-    let mut errors = Vec::new();
-    let nodes = collect_directory(directory, true, include_excluded, &mut errors)?.into_tree();
-    Ok((nodes, errors))
-}
-
-/// Builds the same list tree from indexed description-file candidates.
-pub fn collect_indexed(
-    directory: &Path,
-    descriptions: &[std::path::PathBuf],
-    include_excluded: bool,
-) -> Result<(Vec<Entry>, Vec<Error>), Error> {
-    let (tree, errors) = collect_indexed_directory(directory, descriptions, include_excluded)?;
-    let mut entries = Vec::new();
-    tree.flatten("", &mut entries);
-    Ok((entries, errors))
-}
-
-/// Builds tree output from indexed description-file candidates.
-pub fn collect_indexed_tree(
-    directory: &Path,
-    descriptions: &[std::path::PathBuf],
-    include_excluded: bool,
-) -> Result<(Vec<TreeNode>, Vec<Error>), Error> {
-    let (tree, errors) = collect_indexed_directory(directory, descriptions, include_excluded)?;
-    Ok((tree.into_tree(), errors))
-}
-
-pub fn tree(output: &mut impl Write, nodes: &[TreeNode], color: bool) -> io::Result<()> {
+fn tree(output: &mut impl Write, nodes: &[TreeNode], color: bool) -> io::Result<()> {
     render_tree(output, nodes, "", color)
 }
 
@@ -620,4 +684,40 @@ fn natural_cmp(a: &[u16], b: &[u16]) -> Ordering {
 #[cfg(not(windows))]
 fn natural_cmp(a: &[u16], b: &[u16]) -> Ordering {
     a.cmp(b)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn output_failures_are_fatal_for_records_and_error_summaries() {
+        let directory = tempfile::tempdir().unwrap();
+        for bytes in [b"\xef\xbb\xbfentry note\n".as_slice(), b"missing BOM"] {
+            fs::write(directory.path().join("descript.ion"), bytes).unwrap();
+            for format in [Format::Columns, Format::Long, Format::Tree] {
+                for json in [false, true] {
+                    let options = Options {
+                        source: Source::Scan,
+                        format,
+                        json,
+                        recursive: false,
+                        include_excluded: false,
+                    };
+                    let mut buffer = [];
+                    let mut output = io::Cursor::new(buffer.as_mut_slice());
+                    let error = list(
+                        directory.path(),
+                        &options,
+                        &mut output,
+                        false,
+                        Language::English,
+                    )
+                    .expect_err("a full output buffer must fail");
+                    assert_eq!(error.code, "io_error");
+                    assert_eq!(error.exit_code, 1);
+                }
+            }
+        }
+    }
 }

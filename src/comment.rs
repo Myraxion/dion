@@ -4,6 +4,18 @@ use crate::{
 };
 use std::{borrow::Cow, collections::BTreeSet, ops::Range};
 
+/// Decodes UTF-8 comment input with an optional BOM, preserving its body verbatim.
+pub fn decode_input(bytes: &[u8]) -> Result<String, Error> {
+    let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
+    std::str::from_utf8(bytes).map(str::to_owned).map_err(|_| {
+        Error::new(
+            "invalid_encoding",
+            Diagnostic::InvalidCommentInputEncoding,
+            1,
+        )
+    })
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Extension {

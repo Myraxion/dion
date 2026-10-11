@@ -1,9 +1,9 @@
 use crate::{
-    comment, editor,
+    comment,
     error::{Diagnostic, Error},
-    everything, help,
+    help,
     i18n::Language,
-    listing,
+    listing, modification,
     name::Name,
     storage, terminal,
 };
@@ -328,16 +328,7 @@ fn command_name(name: &str) -> &str {
 
 fn remove(args: &[OsString], json: bool) -> Result<(), Error> {
     let path = absolute_path(&args[1])?;
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| Error::new("invalid_argument", Diagnostic::InvalidEntryName, 2))?;
-    let file = path
-        .parent()
-        .ok_or_else(|| Error::new("invalid_argument", Diagnostic::PathHasNoParent, 2))?
-        .join("descript.ion");
-    let original = storage::read(&file)?;
-    let changed = remove_record(&file, original.as_deref(), name)?;
+    let changed = modification::Target::new(&path)?.remove()?;
     if json {
         write_json(
             &mut io::stdout().lock(),
@@ -350,44 +341,21 @@ fn remove(args: &[OsString], json: bool) -> Result<(), Error> {
 
 fn set(args: &[OsString], source: Option<&CommentSource>, json: bool) -> Result<(), Error> {
     let path = absolute_path(&args[1])?;
-    if matches!(source, Some(CommentSource::Edit)) {
-        let changed = edit_comment(&path)?;
-        if json {
-            write_json(
-                &mut io::stdout().lock(),
-                &serde_json::json!({"changed": changed}),
-            )
-            .map_err(|error| Error::new("io_error", error.to_string(), 1))?;
+    let target = modification::Target::new(&path)?;
+    let changed = match source {
+        Some(CommentSource::Edit) => target.edit()?,
+        None => {
+            let body = args[2].to_str().ok_or_else(|| {
+                Error::new("invalid_argument", Diagnostic::InvalidCommentEncoding, 2)
+            })?;
+            target.set(body)?
         }
-        return Ok(());
-    }
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| Error::new("invalid_argument", Diagnostic::InvalidEntryName, 2))?;
-    let body = match source {
-        None => args[2]
-            .to_str()
-            .ok_or_else(|| Error::new("invalid_argument", Diagnostic::InvalidCommentEncoding, 2))?
-            .to_owned(),
-        Some(source) => read_comment(source)?,
+        Some(source) => target.set(&read_comment(source)?)?,
     };
-    let body = validate_body(&body)?;
-    std::fs::symlink_metadata(&path).map_err(|error| Error::io(error, &path))?;
-    let file = path
-        .parent()
-        .ok_or_else(|| Error::new("invalid_argument", Diagnostic::PathHasNoParent, 2))?
-        .join("descript.ion");
-    let original = storage::read(&file)?;
-    let bytes =
-        comment::set(original.as_deref(), name, &body).map_err(|error| error.at_file(&file))?;
-    if let Some(bytes) = &bytes {
-        storage::commit(&file, original.as_deref(), bytes)?;
-    }
     if json {
         write_json(
             &mut io::stdout().lock(),
-            &serde_json::json!({"changed": bytes.is_some()}),
+            &serde_json::json!({"changed": changed}),
         )
         .map_err(|error| Error::new("io_error", error.to_string(), 1))?;
     }
@@ -413,104 +381,11 @@ fn read_comment(source: &CommentSource) -> Result<String, Error> {
             ));
         }
     };
-    let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
-    std::str::from_utf8(bytes).map(str::to_owned).map_err(|_| {
-        let error = Error::new(
-            "invalid_encoding",
-            Diagnostic::InvalidCommentInputEncoding,
-            1,
-        );
-        match source {
-            CommentSource::File(file) => error.at_file(file),
-            CommentSource::Stdin => error,
-            CommentSource::Edit => error,
-        }
+    comment::decode_input(&bytes).map_err(|error| match source {
+        CommentSource::File(file) => error.at_file(file),
+        CommentSource::Stdin => error,
+        CommentSource::Edit => error,
     })
-}
-
-fn validate_body(body: &str) -> Result<String, Error> {
-    if body.trim().is_empty() || body.contains(['\0', '\u{4}']) {
-        return Err(Error::new(
-            "invalid_argument",
-            Diagnostic::InvalidCommentBody,
-            2,
-        ));
-    }
-    Ok(body.replace("\r\n", "\n").replace('\r', "\n"))
-}
-
-fn remove_record(
-    file: &std::path::Path,
-    original: Option<&[u8]>,
-    name: &str,
-) -> Result<bool, Error> {
-    let Some(original) = original else {
-        return Ok(false);
-    };
-    match comment::remove(original, name).map_err(|error| error.at_file(file))? {
-        comment::Removal::Unchanged => Ok(false),
-        comment::Removal::Update(bytes) => {
-            storage::commit(file, Some(original), &bytes)?;
-            Ok(true)
-        }
-        comment::Removal::DeleteFile => {
-            storage::remove(file, original)?;
-            Ok(true)
-        }
-    }
-}
-
-fn edit_comment(path: &std::path::Path) -> Result<bool, Error> {
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| Error::new("invalid_argument", Diagnostic::InvalidEntryName, 2))?;
-    let file = path
-        .parent()
-        .ok_or_else(|| Error::new("invalid_argument", Diagnostic::PathHasNoParent, 2))?
-        .join("descript.ion");
-    let original = storage::read(&file)?;
-    let records = original
-        .as_deref()
-        .map(comment::parse)
-        .transpose()
-        .map_err(|error| error.at_file(&file))?
-        .unwrap_or_default();
-    let key = Name::new(name);
-    let prefill = records
-        .iter()
-        .find(|record| key.matches(record.name))
-        .map_or("", |record| record.comment.as_ref());
-    let text = editor::create(prefill)?;
-    let result = (|| {
-        editor::run(&text)?;
-        // This includes no-op edits and file appearance/disappearance. Retain the
-        // original baseline for the later storage commit's own conflict checks.
-        if storage::read(&file)? != original {
-            return Err(Error::new(
-                "content_changed",
-                Diagnostic::DescriptionFileContentChangedWhileEditing,
-                1,
-            )
-            .at_file(&file));
-        }
-        let body = read_comment(&CommentSource::File(text.clone()))?;
-        let changed = if body.is_empty() {
-            remove_record(&file, original.as_deref(), name)?
-        } else {
-            let body = validate_body(&body)?;
-            std::fs::symlink_metadata(path).map_err(|error| Error::io(error, path))?;
-            let bytes = comment::set(original.as_deref(), name, &body)
-                .map_err(|error| error.at_file(&file))?;
-            if let Some(bytes) = &bytes {
-                storage::commit(&file, original.as_deref(), bytes)?;
-            }
-            bytes.is_some()
-        };
-        std::fs::remove_file(&text).map_err(|error| Error::io(error, &text))?;
-        Ok(changed)
-    })();
-    result.map_err(|error| editor::recovery(error, &text))
 }
 
 fn list(arguments: &Arguments, json: bool, language: Language) -> Result<u8, Error> {
@@ -520,63 +395,35 @@ fn list(arguments: &Arguments, json: bool, language: Language) -> Result<u8, Err
         args.get(1)
             .map_or_else(|| PathBuf::from("."), PathBuf::from),
     );
-    if arguments.tree && !json {
-        let (nodes, errors) = if arguments.everything {
-            let descriptions = everything::find_descriptions(
-                &directory,
-                arguments.everything_instance.as_deref(),
-            )?;
-            listing::collect_indexed_tree(&directory, &descriptions, arguments.include_excluded)?
-        } else {
-            listing::collect_tree(&directory, arguments.include_excluded)?
-        };
-        let (use_color, _console_mode) = prepare_color(color_mode, json);
-        let mut output = io::stdout().lock();
-        listing::tree(&mut output, &nodes, use_color)
-            .map_err(|error| Error::new("io_error", error.to_string(), 1))?;
-        return finish_list(&mut output, &errors, !nodes.is_empty(), language);
-    }
-    let (entries, errors) = if arguments.everything {
-        let descriptions =
-            everything::find_descriptions(&directory, arguments.everything_instance.as_deref())?;
-        listing::collect_indexed(&directory, &descriptions, arguments.include_excluded)?
+    let source = if arguments.everything {
+        listing::Source::Everything {
+            instance: arguments.everything_instance.as_deref(),
+        }
     } else {
-        listing::collect(
-            &directory,
-            arguments.recursive || arguments.tree,
-            arguments.include_excluded,
-        )?
+        listing::Source::Scan
+    };
+    let format = if arguments.tree {
+        listing::Format::Tree
+    } else if arguments.long {
+        listing::Format::Long
+    } else {
+        listing::Format::Columns
+    };
+    let options = listing::Options {
+        source,
+        format,
+        json,
+        recursive: arguments.recursive,
+        include_excluded: arguments.include_excluded,
     };
     let (use_color, _console_mode) = prepare_color(color_mode, json);
-    let mut output = io::stdout().lock();
-    let result = if json {
-        write_json(
-            &mut output,
-            &ListOutput {
-                entries: &entries,
-                errors: errors
-                    .iter()
-                    .map(|error| error.localized(language))
-                    .collect(),
-            },
-        )
-    } else if arguments.long {
-        listing::long(&mut output, &entries, use_color)
-    } else {
-        listing::columns(&mut output, &entries, use_color)
-    };
-    result.map_err(|error| Error::new("io_error", error.to_string(), 1))?;
-    if json {
-        Ok(u8::from(!errors.is_empty()))
-    } else {
-        finish_list(&mut output, &errors, !entries.is_empty(), language)
-    }
-}
-
-#[derive(serde::Serialize)]
-struct ListOutput<'a> {
-    entries: &'a [listing::Entry],
-    errors: Vec<crate::error::LocalizedError<'a>>,
+    listing::list(
+        &directory,
+        &options,
+        &mut io::stdout().lock(),
+        use_color,
+        language,
+    )
 }
 
 fn prepare_color(color_mode: ColorMode, json: bool) -> (bool, Option<terminal::ConsoleModeGuard>) {
@@ -594,32 +441,6 @@ fn prepare_color(color_mode: ColorMode, json: bool) -> (bool, Option<terminal::C
         color_mode == ColorMode::Always || console_mode.is_some(),
         console_mode,
     )
-}
-
-fn finish_list(
-    output: &mut impl Write,
-    errors: &[Error],
-    has_entries: bool,
-    language: Language,
-) -> Result<u8, Error> {
-    let result = (|| {
-        if !errors.is_empty() {
-            if has_entries {
-                writeln!(output)?;
-            }
-            if language.is_chinese() {
-                writeln!(output, "错误（{}）：", errors.len())?;
-            } else {
-                writeln!(output, "Errors ({}):", errors.len())?;
-            }
-            for error in errors {
-                error.write_text(output, language)?;
-            }
-        }
-        Ok::<(), io::Error>(())
-    })();
-    result.map_err(|error| Error::new("io_error", error.to_string(), 1))?;
-    Ok(u8::from(!errors.is_empty()))
 }
 
 fn get(args: &[OsString], json: bool) -> Result<(), Error> {

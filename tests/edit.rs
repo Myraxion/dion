@@ -552,6 +552,22 @@ fn text_mode_success_is_silent_and_failure_reports_recovery_path() {
 }
 
 #[test]
+fn description_conflicts_precede_invalid_edit_encoding_and_retain_text() {
+    let original = "\u{feff}\"照片 😀.txt\" old\r\n";
+    let other = b"\xef\xbb\xbfother concurrent\r\n";
+    let dir = fixture(Some(original.as_bytes()));
+    fs::write(dir.path().join("other.ion"), other).unwrap();
+    fs::write(dir.path().join("body.txt"), b"\xff").unwrap();
+    let output = edit(dir.path())
+        .env("EDIT_BODY", "body.txt")
+        .env("EDIT_CONFLICT", "write")
+        .output()
+        .unwrap();
+    assert_eq!(rejected(&output, 1, "content_changed"), b"\xff");
+    assert_eq!(fs::read(dir.path().join("descript.ion")).unwrap(), other);
+}
+
+#[test]
 fn detects_description_changes_even_when_edit_body_is_unchanged() {
     let original = "\u{feff}\"照片 😀.txt\" old\r\n";
     let other = b"\xef\xbb\xbfother concurrent\r\n";
