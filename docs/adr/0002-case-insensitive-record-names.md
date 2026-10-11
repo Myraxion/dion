@@ -4,4 +4,4 @@ Windows 允许部分目录区分大小写，但 Dion 第一版固定不区分大
 
 ## 名称比较规则（2026-10-10）
 
-Rust Unicode 小写转换已统一改为 Windows `CompareStringOrdinal(..., TRUE)`，让名称匹配、重复检测和列表名称关联使用同一系统规则，继续固定不区分大小写且不跟随目录设置。该选择接受部分 Unicode 名称相等关系发生变化，仍保留既有重复冲突处理；不承诺与所有文件系统或 Total Commander 的名称匹配完全一致。范围、调研依据及验收决定见 [Windows 原生名称比较设计](../windows-name-comparison-design.md)，当前已实现行为以[行为契约](../spec.md)为准。
+Rust Unicode 小写转换已统一改为 Windows `CompareStringOrdinal(..., TRUE)`，让名称匹配、重复检测和列表名称关联使用同一系统规则，继续固定不区分大小写且不跟随目录设置。该选择接受部分 Unicode 名称相等关系发生变化，仍保留既有重复冲突处理；不承诺与所有文件系统或 Total Commander 的名称匹配完全一致。范围、调研依据及验收决定见 [Windows 原生名称比较设计](../archive/windows-name-comparison-design.md)，当前已实现行为以[行为契约](../spec.md)为准。

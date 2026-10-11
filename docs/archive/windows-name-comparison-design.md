@@ -1,11 +1,13 @@
-# Windows 原生名称比较设计
+# Windows 原生名称比较设计（设计与调研档案）
 
-状态：2026-10-10 用户已最终确认共同理解；已实施，通过 Windows 统一检查、性能对比及 Standards/Spec 两路评审。当前已实现行为以[行为契约](spec.md)为准。
+> [!NOTE]
+> **设计与调研档案声明**：
+> 本文记录采用 Windows 原生 `CompareStringOrdinal` 进行名称比较的技术调研、系统 API 与探针实测细节及验收决定。相关特性已全面实施并随 v0.2.0 交付。当前系统的外部行为契约完全以 [行为契约 (spec.md)](../spec.md) 为准。
 
 ## 已确认的决定
 
 - 名称匹配与重复检测统一从 Rust Unicode 小写转换改为 Windows `CompareStringOrdinal(..., TRUE)`，覆盖 `get/set/remove`、外部编辑预填、备注记录重复检测、列表目录识别与树节点合并。
-- 继续固定不区分大小写，不读取或跟随目录的大小写敏感设置，沿用 [ADR-0002](adr/0002-case-insensitive-record-names.md) 的范围决定。
+- 继续固定不区分大小写，不读取或跟随目录的大小写敏感设置，沿用 [ADR-0002](../adr/0002-case-insensitive-record-names.md) 的范围决定。
 - 使用系统大写表进行 ordinal 比较，不受用户语言设置影响，不额外进行 Unicode 规范化；接受与原先 Unicode 小写转换的差异。列表展示继续使用既有 `StrCmpLogicalW` 自然排序及原名称 UTF-16 次级比较。
 - 比较规则以该 API 为准，不承诺与所有文件系统或 Total Commander 的名称匹配完全一致。
 - 按新比较规则判断重复后，`get/set/remove` 继续整次报 `invalid_format`，`list` 保留首条有效记录、后续重复行报错并返回退出码 1；不自动改名、合并或修复备注文件。
@@ -38,5 +40,5 @@
 
 - 名称相关新增 9 个真实 CLI 回归用例，覆盖独立记录、缺失匹配、写删原字节保留、重复冲突、目录识别、树节点关联、显式长度与 Unicode 组合形式，以及受控编辑器的预填与 no-op。
 - 原生 Windows 统一检查通过：格式、clippy、123 个集成测试、Release 构建。新增名称匹配、写入、删除、目录识别、树节点合并和预填用例均先复现旧匹配规则的失败，再通过实现修复。
-- [同环境性能对比](windows-name-comparison-benchmarks.md)记录 100 条和 10,000 条记录的五轮温运行、峰值提交量与二进制哈希。改动后 exe 为 493 KiB，比改动前小 10 KiB；本次没有发现规模性时延退化。
+- [同环境性能对比](../windows-name-comparison-benchmarks.md)记录 100 条和 10,000 条记录的五轮温运行、峰值提交量与二进制哈希。改动后 exe 为 493 KiB，比改动前小 10 KiB；本次没有发现规模性时延退化。
 - Standards 与 Spec 两路评审均为 0 项发现，评审范围为开始实施前工作区快照到本次实现的增量，未将此前已有的 List 容错改动计为本次新增。
