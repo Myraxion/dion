@@ -64,6 +64,34 @@ fn json_preserves_record_spelling_and_uses_utf8_without_bom_and_final_lf() {
     );
 }
 
+#[cfg(windows)]
+#[test]
+fn short_comment_without_a_newline_reports_a_closed_output_pipe() {
+    let bytes = b"\xef\xbb\xbfentry short\r\n";
+    let directory = fixture(bytes);
+    let (reader, writer) = std::io::pipe().unwrap();
+    // Close before spawning so the output failure does not depend on scheduling.
+    drop(reader);
+    let result = Command::new(env!("CARGO_BIN_EXE_dion"))
+        .current_dir(directory.path())
+        .args(["get", "entry"])
+        .env("DION_LANG", "en")
+        .stdout(writer)
+        .output()
+        .unwrap();
+
+    assert_eq!(result.status.code(), Some(1), "{:?}", result.stderr);
+    assert!(
+        result.stderr.starts_with(b"io_error: "),
+        "{:?}",
+        result.stderr
+    );
+    assert_eq!(
+        fs::read(directory.path().join("descript.ion")).unwrap(),
+        bytes
+    );
+}
+
 #[test]
 fn distinguishes_empty_records_missing_records_and_argument_errors() {
     let directory = fixture(b"\xef\xbb\xbfempty \r\n\"quoted empty\"\nname_only");

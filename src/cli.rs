@@ -472,7 +472,9 @@ fn get(args: &[OsString], json: bool) -> Result<(), Error> {
     } else {
         output.write_all(record.comment.as_bytes())
     };
-    result.map_err(|error| Error::new("io_error", error.to_string(), 1))
+    result
+        .and_then(|()| output.flush())
+        .map_err(|error| Error::new("io_error", error.to_string(), 1))
 }
 
 fn absolute_path(argument: &OsString) -> Result<PathBuf, Error> {

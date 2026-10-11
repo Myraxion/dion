@@ -157,6 +157,7 @@ mod windows {
                 "DionEverythingReply_{}_{}",
                 // SAFETY: These APIs have no pointer or handle arguments.
                 unsafe { GetCurrentProcessId() },
+                // SAFETY: This API has no arguments.
                 unsafe { GetCurrentThreadId() }
             )
             .encode_utf16()
@@ -424,7 +425,10 @@ mod windows {
             if result == WAIT_FAILED {
                 return Err(last_error(Diagnostic::EverythingWaitFailed));
             }
+            // SAFETY: Message contains only raw pointers and integer fields, all valid when zeroed.
             let mut message: Message = unsafe { mem::zeroed() };
+            // SAFETY: message is writable; a null window selects this thread's queue,
+            // and zero bounds with PM_REMOVE retrieve and remove any queued message.
             while unsafe { PeekMessageW(&mut message, ptr::null_mut(), 0, 0, PM_REMOVE) } != 0 {
                 if message.message == WM_QUIT {
                     return Err(ipc_error(Diagnostic::ReplyWindowClosed));
@@ -451,10 +455,11 @@ mod windows {
             // SAFETY: WM_COPYDATA supplies a valid COPYDATASTRUCT for the duration of this call.
             let data = unsafe { &*(lparam as *const CopyDataStruct) };
             if data.data == QUERY_COMPLETE && (data.size == 0 || !data.bytes.is_null()) {
-                // SAFETY: Windows guarantees cbData readable bytes during WM_COPYDATA processing.
                 let bytes = if data.size == 0 {
                     &[]
                 } else {
+                    // SAFETY: The buffer is non-null, and Windows guarantees cbData
+                    // readable bytes during this call. u8 requires no extra alignment.
                     unsafe { slice::from_raw_parts(data.bytes.cast::<u8>(), data.size as usize) }
                 };
                 QUERY_REPLY.with(|reply| *reply.borrow_mut() = Some(bytes.to_vec()));
