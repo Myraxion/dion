@@ -12,7 +12,7 @@
 
 ```text
 dion [--json|-j] get <path>
-dion [--json|-j] list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--all|-a] [--color auto|always|never]
+dion [--json|-j] list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--everything [--everything-instance <name>]] [--all|-a] [--color auto|always|never]
 dion [--json|-j] set <path> <comment>
 dion [--json|-j] set <path> --stdin|-i
 dion [--json|-j] set <path> --comment-file|-f <file>
@@ -23,9 +23,9 @@ dion [--json|-j] <command> --help | -h
 ```
 
 - 命令别名：`view`、`cat` 对应 `get`；`ls` 对应 `list`；`rm`、`unset`、`del` 对应 `remove`。`set` 保留原名，无额外别名。别名与完整命令的操作、选项范围、输出及退出码一致。
-- 短选项与长选项等价：`--json/-j`、`--help/-h`、`--long/-l`、`--recursive/-r`、`--tree/-t`、`--all/-a`、`--stdin/-i`、`--comment-file/-f`、`--edit/-e`。`--color` 没有短选项。后文长选项的规则同样适用于对应短选项。
+- 短选项与长选项等价：`--json/-j`、`--help/-h`、`--long/-l`、`--recursive/-r`、`--tree/-t`、`--all/-a`、`--stdin/-i`、`--comment-file/-f`、`--edit/-e`。`--color`、`--everything`、`--everything-instance` 没有短选项。后文长选项的规则同样适用于对应短选项。
 - 命令及选项区分大小写，只接受明确指定的写法，不识别任意前缀。选项须按独立参数输入，不支持短选项连写、选项与值紧连或等号传值；`-f` 的文件名放在下一个参数中。
-- 重复选项（包括长短同义组合）报 `invalid_argument`、退出码 2；正文来源互斥、列表模式互斥、命令范围和 `--` 分隔规则保持一致。
+- 重复选项（包括长短同义组合）报 `invalid_argument`、退出码 2；正文来源互斥、列表模式互斥、命令范围和 `--` 分隔规则保持一致。`--everything-instance` 只能与 `--everything` 组合，并消耗下一个参数作为实例名称。
 
 ## 命令帮助
 
@@ -49,7 +49,8 @@ dion [--json|-j] <command> --help | -h
 ## 命令与路径
 
 - `get`、`set`、`remove` 接受一个文件或文件夹路径，操作该条目自身的备注，使用其父目录的备注文件。
-- `list` 接受可选目录，省略时使用当前目录；默认只列出自身备注文件中的记录。`--recursive`（`-r`）开启递归，可与双栏、单栏及 JSON 组合，仅适用于 `list`。`--all`（`-a`）仅适用于 `list`，递归时包含默认排除的目录；未开启递归时接受该选项但不改变结果。查询实际目录条目以识别类型；目录符号链接和 Junction 自身也归入目录组。
+- `list` 接受可选目录，省略时使用当前目录；默认只列出自身备注文件中的记录。`--recursive`（`-r`）开启递归，可与双栏、单栏及 JSON 组合，仅适用于 `list`。`--everything` 仅适用于 `list`，并且必须与 `--recursive` 或 `--tree` 组合。它通过 Everything IPC 查询目标目录范围内的 `descript.ion` 候选位置，再核实 Dion 的递归排除及目录链接边界；读取、解析、记录类型匹配、自然排序和文本/JSON 输出沿用现有规则。`--all`（`-a`）仅适用于 `list`，递归时包含默认排除的目录；未开启递归时接受该选项但不改变结果。普通目录扫描查询实际目录条目以识别类型；目录符号链接和 Junction 自身也归入目录组。
+- `--everything` 只覆盖 Everything 当前索引中的路径。索引排除或尚未收录的备注文件可能遗漏；未访问目录的遍历错误不会报告。查询失败直接报错，不自动回退目录扫描。需要已运行、数据库已加载的 Everything 1.4.1 或更高版本；使用固定 5 秒 IPC 时限。未指定实例时优先查询 `1.5a`，找不到时查询未命名实例；`--everything-instance <name>` 只查询明确指定的命名实例。
 - 列表按目录组、文件组输出，各组采用 Windows 不区分大小写的 `StrCmpLogicalW` 自然升序（如 `file2` 在 `file10` 前），比较相等时按原名称的 UTF-16 序列比较。接受系统排序细节随 Windows 版本变化；不改变名称匹配和重复检测。
 - 孤立记录保留并归入文件组。非普通记录名称作为完整名称匹配实际条目，无法对应普通条目时作为孤立记录；不解释名称中的分隔符或点组件，不据此访问其他目录。
 - 默认递归在任意层级按完整目录名称、使用 Windows 不区分大小写比较跳过 `$RECYCLE.BIN`、`System Volume Information`、`.git`、`node_modules`、`.venv`、`__pycache__`、`.pytest_cache`、`.next`、`.svn`、`.mypy_cache`、`.ruff_cache`、`.tox`、`.nox` 和 `.parcel-cache`；不检查路径或属性。`--all`（`-a`）取消排除。主动跳过不生成错误或改变退出码，父目录备注文件中对该目录自身的记录仍正常列出。显式指定名单中的目录作为起始目录时读取其内部，但递归子目录仍适用名单。被跳过的子树不生成树辅助目录节点。

@@ -64,6 +64,17 @@ pub fn error_message(code: &str, message: &str, language: Language) -> String {
     if !language.is_chinese() {
         return english_dynamic_message(message);
     }
+    if code == "everything_error" {
+        return match message {
+            "Everything instance not found" => "找不到 Everything 实例".into(),
+            "Everything database is not ready" => "Everything 数据库尚未就绪".into(),
+            "Everything IPC timed out" => "Everything IPC 查询超时".into(),
+            "Everything 1.4.1 or later is required" => {
+                "需要 Everything 1.4.1 或更高版本".into()
+            }
+            message => format!("Everything 查询失败：{message}"),
+        };
+    }
     if let Some((base, path)) = message.split_once("; Edit text retained at ") {
         return format!(
             "{}；编辑文本已保留在 {path}",
@@ -90,6 +101,13 @@ pub fn error_message(code: &str, message: &str, language: Language) -> String {
     }
     match message {
         "--color requires auto, always or never" => "--color 的值必须为 auto、always 或 never".into(),
+        "--everything-instance requires a name" => "--everything-instance 需要实例名称".into(),
+        "--everything-instance requires --everything" => {
+            "--everything-instance 必须与 --everything 一起使用".into()
+        }
+        "--everything requires --recursive or --tree" => {
+            "--everything 必须与 --recursive 或 --tree 一起使用".into()
+        }
         "--lang requires en, zh-CN or auto" => "--lang 的值必须为 en、zh-CN 或 auto".into(),
         "--comment-file requires a file; prefix a filename starting with - with ./" => {
             "--comment-file 需要文件路径；以 - 开头的文件名请添加 ./ 前缀".into()
@@ -100,11 +118,11 @@ pub fn error_message(code: &str, message: &str, language: Language) -> String {
         "--tree and --long are mutually exclusive" => "--tree 和 --long 不能同时使用".into(),
         "Usage: dion help [command]" => "用法：dion help [command]".into(),
         "Unknown help command" => "未知的帮助命令".into(),
-        "--long, --recursive, --tree and --color are only supported by list" => {
-            "--long、--recursive、--tree 和 --color 仅适用于 list 命令".into()
+        "--long, --recursive, --tree, --all, --color and --everything are only supported by list" => {
+            "--long、--recursive、--tree、--all、--color 和 --everything 仅适用于 list 命令".into()
         }
-        "Usage: dion [--json|-j] get <path> | remove <path> | list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--color auto|always|never] | set <path> (<comment> | --stdin|-i | --comment-file|-f <file> | --edit|-e); use dion help for command aliases" => {
-            "用法：dion [--json|-j] get <path> | remove <path> | list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--color auto|always|never] | set <path> (<comment> | --stdin|-i | --comment-file|-f <file> | --edit|-e)；使用 dion help 查看命令别名".into()
+        "Usage: dion [--json|-j] get <path> | remove <path> | list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--everything [--everything-instance <name>]] [--all|-a] [--color auto|always|never] | set <path> (<comment> | --stdin|-i | --comment-file|-f <file> | --edit|-e); use dion help for command aliases" => {
+            "用法：dion [--json|-j] get <path> | remove <path> | list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--everything [--everything-instance <name>]] [--all|-a] [--color auto|always|never] | set <path> (<comment> | --stdin|-i | --comment-file|-f <file> | --edit|-e)；使用 dion help 查看命令别名".into()
         }
         "Path must have a UTF-8 entry name" => "路径中的条目名称必须是 UTF-8".into(),
         "Path has no parent" => "路径没有上级目录".into(),

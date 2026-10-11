@@ -149,6 +149,28 @@ pub fn collect_tree(
     Ok((nodes, errors))
 }
 
+/// Builds the same list tree from indexed description-file candidates.
+pub fn collect_indexed(
+    directory: &Path,
+    descriptions: &[std::path::PathBuf],
+    include_excluded: bool,
+) -> Result<(Vec<Entry>, Vec<Error>), Error> {
+    let (tree, errors) = collect_indexed_directory(directory, descriptions, include_excluded)?;
+    let mut entries = Vec::new();
+    tree.flatten("", &mut entries);
+    Ok((entries, errors))
+}
+
+/// Builds tree output from indexed description-file candidates.
+pub fn collect_indexed_tree(
+    directory: &Path,
+    descriptions: &[std::path::PathBuf],
+    include_excluded: bool,
+) -> Result<(Vec<TreeNode>, Vec<Error>), Error> {
+    let (tree, errors) = collect_indexed_directory(directory, descriptions, include_excluded)?;
+    Ok((tree.into_tree(), errors))
+}
+
 pub fn tree(output: &mut impl Write, nodes: &[TreeNode], color: bool) -> io::Result<()> {
     render_tree(output, nodes, "", color)
 }
@@ -279,47 +301,11 @@ fn collect_directory(
         }
     }
     let file = directory.join("descript.ion");
-    // Enumeration is the observation point for absent description files.
-    let bytes = if has_description {
-        match storage::read(&file) {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                errors.push(error);
-                None
-            }
-        }
+    let entries = if has_description {
+        read_description(&file, &directories, errors)
     } else {
-        None
+        Vec::new()
     };
-    let records = match &bytes {
-        Some(bytes) => match comment::parse_for_list(bytes) {
-            Ok((records, diagnostics)) => {
-                errors.extend(diagnostics.into_iter().map(|error| error.at_file(&file)));
-                records
-            }
-            Err(error) => {
-                errors.push(error.at_file(&file));
-                Vec::new()
-            }
-        },
-        None => Vec::new(),
-    };
-    // Lookup uses the complete record name, never a path derived from that name.
-    let mut entries: Vec<_> = records
-        .into_iter()
-        .map(|record| Entry {
-            directory: directories.contains(&Name::new(record.name)),
-            name_utf16: record.name.encode_utf16().chain(Some(0)).collect(),
-            name: record.name.to_owned(),
-            comment: record.comment.into_owned(),
-            extension: record.extension,
-        })
-        .collect();
-    entries.sort_by(|a, b| {
-        b.directory
-            .cmp(&a.directory)
-            .then_with(|| compare_names(&a.name_utf16, &b.name_utf16))
-    });
     children.sort_by(|a, b| compare_names(&a.1, &b.1));
     let mut subdirectories = Vec::new();
     for (name, _, path) in children {
@@ -332,6 +318,240 @@ fn collect_directory(
         entries,
         children: subdirectories,
     })
+}
+
+struct IndexedDirectory {
+    name: String,
+    path: std::path::PathBuf,
+    has_description: bool,
+    children: Vec<IndexedDirectory>,
+}
+
+fn collect_indexed_directory(
+    directory: &Path,
+    descriptions: &[std::path::PathBuf],
+    include_excluded: bool,
+) -> Result<(Directory, Vec<Error>), Error> {
+    let root = indexed_root(directory)?;
+    let mut indexed = IndexedDirectory {
+        name: String::new(),
+        path: root.clone(),
+        has_description: false,
+        children: Vec::new(),
+    };
+    for description in descriptions {
+        let Some(parent) = description.parent() else {
+            continue;
+        };
+        let Some(components) = relative_directory_names(&root, parent)? else {
+            continue;
+        };
+        if !include_excluded && components.iter().any(|name| is_default_excluded_directory(name))
+        {
+            continue;
+        }
+        if has_linked_directory(&root, &components)? {
+            continue;
+        }
+        let mut branch = &mut indexed;
+        for name in components {
+            let index = branch
+                .children
+                .iter()
+                .position(|child| child.name == name)
+                .unwrap_or_else(|| {
+                    branch.children.push(IndexedDirectory {
+                        name: name.clone(),
+                        path: branch.path.join(&name),
+                        has_description: false,
+                        children: Vec::new(),
+                    });
+                    branch.children.len() - 1
+                });
+            branch = &mut branch.children[index];
+        }
+        branch.has_description = true;
+    }
+    let mut errors = Vec::new();
+    let tree = collect_indexed_branch(&indexed, include_excluded, &mut errors)?;
+    Ok((tree, errors))
+}
+
+fn indexed_root(directory: &Path) -> Result<std::path::PathBuf, Error> {
+    let absolute = std::path::absolute(directory).map_err(|error| Error::io(error, directory))?;
+    #[cfg(windows)]
+    {
+        let path = absolute.to_str().ok_or_else(|| {
+            Error::new("invalid_encoding", "Directory name is not valid UTF-8", 1)
+                .at_file(directory)
+        })?;
+        let path = if let Some(path) = path.strip_prefix("\\\\?\\UNC\\") {
+            format!("\\\\{path}")
+        } else if let Some(path) = path.strip_prefix("\\\\?\\") {
+            path.to_owned()
+        } else {
+            path.to_owned()
+        };
+        Ok(std::path::PathBuf::from(path))
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(absolute)
+    }
+}
+
+fn relative_directory_names(root: &Path, directory: &Path) -> Result<Option<Vec<String>>, Error> {
+    let root_components: Vec<_> = root.components().collect();
+    let directory_components: Vec<_> = directory.components().collect();
+    if directory_components.len() < root_components.len() {
+        return Ok(None);
+    }
+    for (left, right) in root_components.iter().zip(&directory_components) {
+        let left = left.as_os_str().to_str().ok_or_else(|| {
+            Error::new("invalid_encoding", "Directory name is not valid UTF-8", 1).at_file(root)
+        })?;
+        let right = right.as_os_str().to_str().ok_or_else(|| {
+            Error::new("invalid_encoding", "Directory name is not valid UTF-8", 1)
+                .at_file(directory)
+        })?;
+        if !Name::new(left).matches(right) {
+            return Ok(None);
+        }
+    }
+    directory_components[root_components.len()..]
+        .iter()
+        .map(|component| {
+            component
+                .as_os_str()
+                .to_str()
+                .map(str::to_owned)
+                .ok_or_else(|| {
+                    Error::new("invalid_encoding", "Directory name is not valid UTF-8", 1)
+                        .at_file(directory)
+                })
+        })
+        .collect::<Result<_, _>>()
+        .map(Some)
+}
+
+fn has_linked_directory(root: &Path, components: &[String]) -> Result<bool, Error> {
+    let mut path = root.to_owned();
+    for component in components {
+        path.push(component);
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+            Err(_) => return Ok(false),
+        };
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::FileTypeExt;
+            if metadata.file_type().is_symlink_dir() {
+                return Ok(true);
+            }
+        }
+        #[cfg(not(windows))]
+        if metadata.file_type().is_symlink() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn collect_indexed_branch(
+    branch: &IndexedDirectory,
+    include_excluded: bool,
+    errors: &mut Vec<Error>,
+) -> Result<Directory, Error> {
+    let mut directories = BTreeSet::new();
+    for entry in fs::read_dir(&branch.path).map_err(|error| Error::io(error, &branch.path))? {
+        let entry = entry.map_err(|error| Error::io(error, &branch.path))?;
+        let kind = entry
+            .file_type()
+            .map_err(|error| Error::io(error, &entry.path()))?;
+        #[cfg(windows)]
+        let is_directory = {
+            use std::os::windows::fs::FileTypeExt;
+            kind.is_dir() || kind.is_symlink_dir()
+        };
+        #[cfg(not(windows))]
+        let is_directory = kind.is_dir();
+        if is_directory
+            && let Some(name) = entry.file_name().to_str()
+        {
+            directories.insert(Name::new(name));
+        }
+    }
+    let file = branch.path.join("descript.ion");
+    let entries = if branch.has_description {
+        read_description(&file, &directories, errors)
+    } else {
+        Vec::new()
+    };
+    let mut children = branch.children.iter().collect::<Vec<_>>();
+    children.sort_by(|left, right| compare_names(&left.name_utf16(), &right.name_utf16()));
+    let mut subdirectories = Vec::new();
+    for child in children {
+        if !include_excluded && is_default_excluded_directory(&child.name) {
+            continue;
+        }
+        match collect_indexed_branch(child, include_excluded, errors) {
+            Ok(directory) => subdirectories.push((child.name.clone(), directory)),
+            Err(error) => errors.push(error),
+        }
+    }
+    Ok(Directory {
+        entries,
+        children: subdirectories,
+    })
+}
+
+impl IndexedDirectory {
+    fn name_utf16(&self) -> Vec<u16> {
+        self.name.encode_utf16().chain(Some(0)).collect()
+    }
+}
+
+fn read_description(
+    file: &Path,
+    directories: &BTreeSet<Name>,
+    errors: &mut Vec<Error>,
+) -> Vec<Entry> {
+    let bytes = match storage::read(file) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            errors.push(error);
+            None
+        }
+    };
+    let mut entries = match bytes {
+        Some(bytes) => match comment::parse_for_list(&bytes) {
+            Ok((records, diagnostics)) => {
+                errors.extend(diagnostics.into_iter().map(|error| error.at_file(file)));
+                records
+                    .into_iter()
+                    .map(|record| Entry {
+                        directory: directories.contains(&Name::new(record.name)),
+                        name_utf16: record.name.encode_utf16().chain(Some(0)).collect(),
+                        name: record.name.to_owned(),
+                        comment: record.comment.into_owned(),
+                        extension: record.extension,
+                    })
+                    .collect()
+            }
+            Err(error) => {
+                errors.push(error.at_file(file));
+                Vec::new()
+            }
+        },
+        None => Vec::new(),
+    };
+    entries.sort_by(|a, b| {
+        b.directory
+            .cmp(&a.directory)
+            .then_with(|| compare_names(&a.name_utf16, &b.name_utf16))
+    });
+    entries
 }
 
 fn is_default_excluded_directory(name: &str) -> bool {

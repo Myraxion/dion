@@ -2,6 +2,7 @@ mod cli;
 mod comment;
 mod editor;
 mod error;
+mod everything;
 mod help;
 mod i18n;
 mod listing;

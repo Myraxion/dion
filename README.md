@@ -8,7 +8,7 @@ Language / 语言： [English](README.en.md) | 简体中文
 
 - **单文件运行**：适用于 Windows 10/11 x64，无需安装 Rust 或额外运行库；当前本地 Release exe 为 524,800 字节（512.5 KiB）。
 - **四个基础命令**：查看单条备注、列出目录备注、设置或覆盖备注、显式删除备注。
-- **列表展示**：目录优先、名称自然排序，默认双栏对齐，支持 `--long`（`-l`）、`--recursive`（`-r`）、`--tree` 及名称自动着色。
+- **列表展示**：目录优先、名称自然排序，默认双栏对齐，支持 `--long`（`-l`）、`--recursive`（`-r`）、`--tree`、通过 Everything 索引加速递归查询及名称自动着色。
 - **Unicode 与多行**：支持中文、Emoji、含空格的名称和多行正文，保留缩进、首尾空白和空行。
 - **局部修改**：保留其他记录的原始字节与顺序；设置相同内容时不写文件。
 - **正文输入**：支持正文参数、stdin、UTF-8 文本文件及 `set --edit` 外部编辑；沿用 JSON 输出和稳定退出码。
@@ -25,7 +25,7 @@ Language / 语言： [English](README.en.md) | 简体中文
 dion help [command]
 dion [--json|-j] get <path>
 dion [--json|-j] set <path> (<comment> | --comment-file|-f <file> | --stdin|-i | --edit|-e)
-dion [--json|-j] list [directory] [--long|-l | --tree|-t] [--recursive|-r] [--all|-a] [--color auto|always|never]
+dion [--json|-j] list [directory] [--long|-l | --tree|-t] [--recursive|-r] [--everything [--everything-instance <name>]] [--all|-a] [--color auto|always|never]
 dion [--json|-j] remove <path>
 ```
 
@@ -62,6 +62,8 @@ dion unset file.txt -j
   - 默认双栏对齐展示。
   - `--long`（`-l`）：单栏详细展示，完整呈现多行正文。
   - `--recursive`（`-r`）：递归汇总子目录的备注。
+  - `--everything`：通过已运行的 Everything 索引发现递归备注文件，必须与 `--recursive` 或 `--tree` 组合。只查询已编入索引的路径，可能遗漏索引排除项；要求 Everything 1.4.1 或更高版本且数据库已加载。
+  - `--everything-instance <name>`：与 `--everything` 一起指定命名实例；默认优先查询 `1.5a`，找不到时使用未命名实例。
   - 默认递归跳过 `$RECYCLE.BIN`、`System Volume Information`、`.git`、`node_modules`、`.venv`、`__pycache__`、`.pytest_cache`、`.next`、`.svn`、`.mypy_cache`、`.ruff_cache`、`.tox`、`.nox` 和 `.parcel-cache`；按完整目录名称不区分大小写匹配，主动跳过不报错。目录自身备注仍显示。
   - `--all`（`-a`）：递归时包含上述默认排除目录；单独用于非递归列表时不改变结果。
   - `--tree`：树状层级展开展示（自动递归；与 `--long` 互斥）。

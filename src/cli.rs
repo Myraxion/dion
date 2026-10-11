@@ -1,5 +1,6 @@
 use crate::{
-    comment, editor, error::Error, help, i18n::Language, listing, name::Name, storage, terminal,
+    comment, editor, error::Error, everything, help, i18n::Language, listing, name::Name,
+    storage, terminal,
 };
 use std::{
     env,
@@ -55,6 +56,8 @@ struct Arguments {
     include_excluded: bool,
     help: bool,
     color: Option<ColorMode>,
+    everything: bool,
+    everything_instance: Option<String>,
 }
 
 fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
@@ -68,6 +71,8 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
     let mut include_excluded = false;
     let mut help = false;
     let mut color = None;
+    let mut use_everything = false;
+    let mut everything_instance = None;
     let mut language = None;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
@@ -95,6 +100,17 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
             recursive = true;
         } else if (arg == "--tree" || arg == "-t") && !tree {
             tree = true;
+        } else if arg == "--everything" && !use_everything {
+            use_everything = true;
+        } else if arg == "--everything-instance" && everything_instance.is_none() {
+            let value = args
+                .next()
+                .and_then(|value| value.to_str())
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    Error::new("invalid_argument", "--everything-instance requires a name", 2)
+                })?;
+            everything_instance = Some(value.to_owned());
         } else if (arg == "--all" || arg == "-a") && !include_excluded {
             include_excluded = true;
         } else if arg == "--color" && color.is_none() {
@@ -166,6 +182,8 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
         include_excluded,
         help,
         color,
+        everything: use_everything,
+        everything_instance,
     })
 }
 
@@ -203,12 +221,28 @@ fn execute(arguments: &Arguments, json: bool, language: Language) -> Result<u8, 
         || arguments.recursive
         || arguments.tree
         || arguments.include_excluded
-        || arguments.color.is_some())
+        || arguments.color.is_some()
+        || arguments.everything
+        || arguments.everything_instance.is_some())
         && command != Some("list")
     {
         return Err(Error::new(
             "invalid_argument",
-            "--long, --recursive, --tree, --all and --color are only supported by list",
+            "--long, --recursive, --tree, --all, --color and --everything are only supported by list",
+            2,
+        ));
+    }
+    if arguments.everything_instance.is_some() && !arguments.everything {
+        return Err(Error::new(
+            "invalid_argument",
+            "--everything-instance requires --everything",
+            2,
+        ));
+    }
+    if arguments.everything && !arguments.recursive && !arguments.tree {
+        return Err(Error::new(
+            "invalid_argument",
+            "--everything requires --recursive or --tree",
             2,
         ));
     }
@@ -225,7 +259,7 @@ fn execute(arguments: &Arguments, json: bool, language: Language) -> Result<u8, 
         }
         _ => Err(Error::new(
             "invalid_argument",
-            "Usage: dion [--json|-j] get <path> | remove <path> | list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--color auto|always|never] | set <path> (<comment> | --stdin|-i | --comment-file|-f <file> | --edit|-e); use dion help for command aliases",
+            "Usage: dion [--json|-j] get <path> | remove <path> | list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--everything [--everything-instance <name>]] [--all|-a] [--color auto|always|never] | set <path> (<comment> | --stdin|-i | --comment-file|-f <file> | --edit|-e); use dion help for command aliases",
             2,
         )),
     }
@@ -245,6 +279,10 @@ fn language_option(args: &[OsString]) -> Option<Language> {
         if argument == "--lang" {
             let value = args.get(index + 1)?.to_str()?;
             return Language::resolve_option(value);
+        }
+        if argument == "--everything-instance" {
+            index += 2;
+            continue;
         }
         if argument == "--color" && !color_seen {
             color_seen = true;
@@ -463,18 +501,32 @@ fn list(arguments: &Arguments, json: bool, language: Language) -> Result<u8, Err
             .map_or_else(|| PathBuf::from("."), PathBuf::from),
     );
     if arguments.tree && !json {
-        let (nodes, errors) = listing::collect_tree(&directory, arguments.include_excluded)?;
+        let (nodes, errors) = if arguments.everything {
+            let descriptions = everything::find_descriptions(
+                &directory,
+                arguments.everything_instance.as_deref(),
+            )?;
+            listing::collect_indexed_tree(&directory, &descriptions, arguments.include_excluded)?
+        } else {
+            listing::collect_tree(&directory, arguments.include_excluded)?
+        };
         let (use_color, _console_mode) = prepare_color(color_mode, json);
         let mut output = io::stdout().lock();
         listing::tree(&mut output, &nodes, use_color)
             .map_err(|error| Error::new("io_error", error.to_string(), 1))?;
         return finish_list(&mut output, &errors, !nodes.is_empty(), language);
     }
-    let (entries, errors) = listing::collect(
-        &directory,
-        arguments.recursive || arguments.tree,
-        arguments.include_excluded,
-    )?;
+    let (entries, errors) = if arguments.everything {
+        let descriptions =
+            everything::find_descriptions(&directory, arguments.everything_instance.as_deref())?;
+        listing::collect_indexed(&directory, &descriptions, arguments.include_excluded)?
+    } else {
+        listing::collect(
+            &directory,
+            arguments.recursive || arguments.tree,
+            arguments.include_excluded,
+        )?
+    };
     let (use_color, _console_mode) = prepare_color(color_mode, json);
     let mut output = io::stdout().lock();
     let result = if json {
