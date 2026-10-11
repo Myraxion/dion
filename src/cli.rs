@@ -1,6 +1,6 @@
 use crate::{
-    comment, editor, error::Error, everything, help, i18n::Language, listing, name::Name,
-    storage, terminal,
+    comment, editor, error::Error, everything, help, i18n::Language, listing, name::Name, storage,
+    terminal,
 };
 use std::{
     env,
@@ -108,7 +108,11 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
                 .and_then(|value| value.to_str())
                 .filter(|value| !value.is_empty())
                 .ok_or_else(|| {
-                    Error::new("invalid_argument", "--everything-instance requires a name", 2)
+                    Error::new(
+                        "invalid_argument",
+                        "--everything-instance requires a name",
+                        2,
+                    )
                 })?;
             everything_instance = Some(value.to_owned());
         } else if (arg == "--all" || arg == "-a") && !include_excluded {

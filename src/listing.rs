@@ -346,7 +346,10 @@ fn collect_indexed_directory(
         let Some(components) = relative_directory_names(&root, parent)? else {
             continue;
         };
-        if !include_excluded && components.iter().any(|name| is_default_excluded_directory(name))
+        if !include_excluded
+            && components
+                .iter()
+                .any(|name| is_default_excluded_directory(name))
         {
             continue;
         }
@@ -477,9 +480,7 @@ fn collect_indexed_branch(
             };
             #[cfg(not(windows))]
             let is_directory = kind.is_dir();
-            if is_directory
-                && let Some(name) = entry.file_name().to_str()
-            {
+            if is_directory && let Some(name) = entry.file_name().to_str() {
                 directories.insert(Name::new(name));
             }
         }

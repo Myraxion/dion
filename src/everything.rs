@@ -24,9 +24,7 @@ mod windows {
     use std::{
         cell::RefCell,
         ffi::c_void,
-        mem,
-        ptr,
-        slice,
+        mem, ptr, slice,
         time::{Duration, Instant},
     };
 
@@ -304,8 +302,8 @@ mod windows {
         deadline: Instant,
         description: &str,
     ) -> Result<usize, Error> {
-        let timeout = remaining_millis(deadline)
-            .ok_or_else(|| ipc_error("Everything IPC timed out"))?;
+        let timeout =
+            remaining_millis(deadline).ok_or_else(|| ipc_error("Everything IPC timed out"))?;
         let mut result = 0;
         // SAFETY: The destination is the discovered Everything window; scalar message values are valid.
         let sent = unsafe {
@@ -330,13 +328,17 @@ mod windows {
     }
 
     fn make_query(directory: &Path) -> Result<Vec<u16>, Error> {
-        let absolute = std::path::absolute(directory).map_err(|error| Error::io(error, directory))?;
+        let absolute =
+            std::path::absolute(directory).map_err(|error| Error::io(error, directory))?;
         let path = absolute.to_str().ok_or_else(|| {
             Error::new("invalid_encoding", "Directory name is not valid UTF-8", 1)
                 .at_file(directory)
         })?;
         let path = path.strip_prefix("\\\\?\\UNC\\").map_or_else(
-            || path.strip_prefix("\\\\?\\").map_or(path.to_owned(), |path| path.to_owned()),
+            || {
+                path.strip_prefix("\\\\?\\")
+                    .map_or(path.to_owned(), |path| path.to_owned())
+            },
             |path| format!("\\\\{path}"),
         );
         let path = path.trim_end_matches(['\\', '/']);
@@ -350,10 +352,10 @@ mod windows {
         search: &[u16],
         deadline: Instant,
     ) -> Result<(), Error> {
-        let timeout = remaining_millis(deadline)
-            .ok_or_else(|| ipc_error("Everything IPC timed out"))?;
+        let timeout =
+            remaining_millis(deadline).ok_or_else(|| ipc_error("Everything IPC timed out"))?;
         // Everything's IPC wire format uses 32-bit fields, including window handles, on x64.
-        let mut request = Vec::with_capacity(20 + search.len() * mem::size_of::<u16>());
+        let mut request = Vec::with_capacity(20 + mem::size_of_val(search));
         let fields = [
             reply_window as usize as u32,
             QUERY_COMPLETE as u32,
@@ -402,8 +404,8 @@ mod windows {
             if let Some(reply) = QUERY_REPLY.with(|reply| reply.borrow_mut().take()) {
                 return Ok(reply);
             }
-            let timeout = remaining_millis(deadline)
-                .ok_or_else(|| ipc_error("Everything IPC timed out"))?;
+            let timeout =
+                remaining_millis(deadline).ok_or_else(|| ipc_error("Everything IPC timed out"))?;
             // SAFETY: This thread has no wait handles; it waits for input to its own message queue.
             let result = unsafe {
                 MsgWaitForMultipleObjectsEx(
@@ -448,7 +450,8 @@ mod windows {
             let data = unsafe { &*(lparam as *const CopyDataStruct) };
             if data.data == QUERY_COMPLETE && data.size >= 28 && !data.bytes.is_null() {
                 // SAFETY: Windows guarantees cbData readable bytes during WM_COPYDATA processing.
-                let bytes = unsafe { slice::from_raw_parts(data.bytes.cast::<u8>(), data.size as usize) };
+                let bytes =
+                    unsafe { slice::from_raw_parts(data.bytes.cast::<u8>(), data.size as usize) };
                 QUERY_REPLY.with(|reply| *reply.borrow_mut() = Some(bytes.to_vec()));
                 return 1;
             }
@@ -488,16 +491,18 @@ mod windows {
 
     fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, Error> {
         let value = bytes.get(offset..offset + 4).ok_or_else(invalid_reply)?;
-        Ok(u32::from_le_bytes(value.try_into().map_err(|_| invalid_reply())?))
+        Ok(u32::from_le_bytes(
+            value.try_into().map_err(|_| invalid_reply())?,
+        ))
     }
 
     fn read_wide_string(bytes: &[u8], offset: usize) -> Result<String, Error> {
-        if offset % 2 != 0 || offset >= bytes.len() {
+        if !offset.is_multiple_of(2) || offset >= bytes.len() {
             return Err(invalid_reply());
         }
         let mut wide = Vec::new();
         let mut terminated = false;
-        for unit in bytes[offset..].chunks_exact(2) {
+        for unit in bytes[offset..].as_chunks::<2>().0 {
             let unit = u16::from_le_bytes([unit[0], unit[1]]);
             if unit == 0 {
                 terminated = true;
@@ -521,7 +526,11 @@ mod windows {
 
     fn remaining_millis(deadline: Instant) -> Option<u32> {
         let remaining = deadline.checked_duration_since(Instant::now())?;
-        Some(u32::try_from(remaining.as_millis()).unwrap_or(u32::MAX).max(1))
+        Some(
+            u32::try_from(remaining.as_millis())
+                .unwrap_or(u32::MAX)
+                .max(1),
+        )
     }
 
     fn ipc_error(message: &str) -> Error {

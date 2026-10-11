@@ -69,9 +69,7 @@ pub fn error_message(code: &str, message: &str, language: Language) -> String {
             "Everything instance not found" => "找不到 Everything 实例".into(),
             "Everything database is not ready" => "Everything 数据库尚未就绪".into(),
             "Everything IPC timed out" => "Everything IPC 查询超时".into(),
-            "Everything 1.4.1 or later is required" => {
-                "需要 Everything 1.4.1 或更高版本".into()
-            }
+            "Everything 1.4.1 or later is required" => "需要 Everything 1.4.1 或更高版本".into(),
             message => format!("Everything 查询失败：{message}"),
         };
     }
