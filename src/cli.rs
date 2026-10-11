@@ -228,7 +228,7 @@ fn execute(arguments: &Arguments, json: bool, language: Language) -> Result<u8, 
     {
         return Err(Error::new(
             "invalid_argument",
-            "--long, --recursive, --tree, --all, --color and --everything are only supported by list",
+            "--long, --recursive, --tree, --all, --color, --everything and --everything-instance are only supported by list",
             2,
         ));
     }

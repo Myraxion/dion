@@ -118,8 +118,8 @@ pub fn error_message(code: &str, message: &str, language: Language) -> String {
         "--tree and --long are mutually exclusive" => "--tree 和 --long 不能同时使用".into(),
         "Usage: dion help [command]" => "用法：dion help [command]".into(),
         "Unknown help command" => "未知的帮助命令".into(),
-        "--long, --recursive, --tree, --all, --color and --everything are only supported by list" => {
-            "--long、--recursive、--tree、--all、--color 和 --everything 仅适用于 list 命令".into()
+        "--long, --recursive, --tree, --all, --color, --everything and --everything-instance are only supported by list" => {
+            "--long、--recursive、--tree、--all、--color、--everything 和 --everything-instance 仅适用于 list 命令".into()
         }
         "Usage: dion [--json|-j] get <path> | remove <path> | list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--everything [--everything-instance <name>]] [--all|-a] [--color auto|always|never] | set <path> (<comment> | --stdin|-i | --comment-file|-f <file> | --edit|-e); use dion help for command aliases" => {
             "用法：dion [--json|-j] get <path> | remove <path> | list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--everything [--everything-instance <name>]] [--all|-a] [--color auto|always|never] | set <path> (<comment> | --stdin|-i | --comment-file|-f <file> | --edit|-e)；使用 dion help 查看命令别名".into()
