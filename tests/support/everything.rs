@@ -211,6 +211,10 @@ fn main() {
         )
     };
     assert!(!window.is_null());
+    if REPLY.get().unwrap().mode == "delayed-ready" {
+        fs::write(&args[2], "").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
     fs::write(&args[2], "ready").unwrap();
     // SAFETY: This C structure consists only of scalars and nullable pointers.
     let mut message: Message = unsafe { mem::zeroed() };

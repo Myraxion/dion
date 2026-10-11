@@ -59,7 +59,12 @@ impl Peer {
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
             if let Ok(state) = fs::read_to_string(&ready) {
-                return if state == "ready" { Some(peer) } else { None };
+                match state.as_str() {
+                    "ready" => return Some(peer),
+                    "occupied" => return None,
+                    // File creation can become visible before its contents are written.
+                    _ => {}
+                }
             }
             assert!(
                 peer.child.try_wait().unwrap().is_none(),
@@ -139,6 +144,15 @@ fn success(output: &Output) {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn waits_for_ready_file_contents_before_querying_the_peer() {
+    let directory = tempfile::tempdir().unwrap();
+    let peer = Peer::new(&response(&[]), "delayed-ready");
+    let output = peer.list(directory.path(), &["-r", "--json"]);
+    success(&output);
+    assert_eq!(output.stdout, b"{\"entries\":[],\"errors\":[]}\n");
 }
 
 #[test]
