@@ -42,7 +42,6 @@ mod windows {
     const EVERYTHING_IPC_IS_DB_LOADED: usize = 401;
     const EVERYTHING_IPC_COPYDATA_QUERY_W: usize = 2;
     const EVERYTHING_IPC_ALL_RESULTS: u32 = u32::MAX;
-    const EVERYTHING_IPC_MATCH_PATH: u32 = 4;
     const QUERY_COMPLETE: usize = 0;
     const SMTO_BLOCK: u32 = 0x0001;
     const SMTO_ABORT_IF_HUNG: u32 = 0x0002;
@@ -353,11 +352,12 @@ mod windows {
     ) -> Result<(), Error> {
         let timeout = remaining_millis(deadline)
             .ok_or_else(|| ipc_error("Everything IPC timed out"))?;
+        // Everything's IPC wire format uses 32-bit fields, including window handles, on x64.
         let mut request = Vec::with_capacity(20 + search.len() * mem::size_of::<u16>());
         let fields = [
             reply_window as usize as u32,
             QUERY_COMPLETE as u32,
-            EVERYTHING_IPC_MATCH_PATH,
+            0,
             0,
             EVERYTHING_IPC_ALL_RESULTS,
         ];
