@@ -1,7 +1,13 @@
-use crate::{comment, comment::Extension, error::Error, name::Name, storage};
+use crate::{
+    comment,
+    comment::Extension,
+    error::{Diagnostic, Error},
+    name::Name,
+    storage,
+};
 use std::{
     cmp::Ordering,
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::{self, Write},
     path::Path,
@@ -101,18 +107,22 @@ impl Directory {
                 children: Vec::new(),
             })
             .collect();
+        let mut directory_nodes: BTreeMap<_, _> = nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.directory)
+            .map(|(index, node)| (Name::new(&node.name), index))
+            .collect();
         for (name, child) in self.children {
             let children = child.into_tree();
             if children.is_empty() {
                 continue;
             }
             let key = Name::new(&name);
-            if let Some(node) = nodes
-                .iter_mut()
-                .find(|node| node.directory && key.matches(&node.name))
-            {
-                node.children = children;
+            if let Some(&index) = directory_nodes.get(&key) {
+                nodes[index].children = children;
             } else {
+                directory_nodes.insert(key, nodes.len());
                 nodes.push(TreeNode {
                     name_utf16: name.encode_utf16().chain(Some(0)).collect(),
                     name,
@@ -288,7 +298,7 @@ fn collect_directory(
                 let name = name
                     .to_str()
                     .ok_or_else(|| {
-                        Error::new("invalid_encoding", "Directory name is not valid UTF-8", 1)
+                        Error::new("invalid_encoding", Diagnostic::InvalidDirectoryEncoding, 1)
                             .at_file(&entry.path())
                     })?
                     .to_owned();
@@ -322,9 +332,17 @@ fn collect_directory(
 
 struct IndexedDirectory {
     name: String,
+    name_utf16: Vec<u16>,
     path: std::path::PathBuf,
     has_description: bool,
-    children: Vec<IndexedDirectory>,
+    access: DirectoryAccess,
+    children: BTreeMap<String, IndexedDirectory>,
+}
+
+enum DirectoryAccess {
+    Readable,
+    Skip,
+    Failed(Error),
 }
 
 fn collect_indexed_directory(
@@ -335,9 +353,11 @@ fn collect_indexed_directory(
     let root = indexed_root(directory)?;
     let mut indexed = IndexedDirectory {
         name: String::new(),
+        name_utf16: Vec::new(),
         path: root.clone(),
         has_description: false,
-        children: Vec::new(),
+        access: DirectoryAccess::Readable,
+        children: BTreeMap::new(),
     };
     for description in descriptions {
         let Some(parent) = description.parent() else {
@@ -353,30 +373,23 @@ fn collect_indexed_directory(
         {
             continue;
         }
-        if has_linked_directory(&root, &components)? {
-            continue;
-        }
         let mut branch = &mut indexed;
         for name in components {
-            let index = branch
+            let path = branch.path.join(&name);
+            branch = branch
                 .children
-                .iter()
-                .position(|child| child.name == name)
-                .unwrap_or_else(|| {
-                    branch.children.push(IndexedDirectory {
-                        name: name.clone(),
-                        path: branch.path.join(&name),
-                        has_description: false,
-                        children: Vec::new(),
-                    });
-                    branch.children.len() - 1
-                });
-            branch = &mut branch.children[index];
+                .entry(name.clone())
+                .or_insert_with(|| IndexedDirectory::new(name, path));
+            if !matches!(branch.access, DirectoryAccess::Readable) {
+                break;
+            }
         }
-        branch.has_description = true;
+        if matches!(branch.access, DirectoryAccess::Readable) {
+            branch.has_description = true;
+        }
     }
     let mut errors = Vec::new();
-    let tree = collect_indexed_branch(&indexed, include_excluded, &mut errors)?;
+    let tree = collect_indexed_branch(indexed, &mut errors)?;
     Ok((tree, errors))
 }
 
@@ -385,7 +398,7 @@ fn indexed_root(directory: &Path) -> Result<std::path::PathBuf, Error> {
     #[cfg(windows)]
     {
         let path = absolute.to_str().ok_or_else(|| {
-            Error::new("invalid_encoding", "Directory name is not valid UTF-8", 1)
+            Error::new("invalid_encoding", Diagnostic::InvalidDirectoryEncoding, 1)
                 .at_file(directory)
         })?;
         let path = if let Some(path) = path.strip_prefix("\\\\?\\UNC\\") {
@@ -411,10 +424,10 @@ fn relative_directory_names(root: &Path, directory: &Path) -> Result<Option<Vec<
     }
     for (left, right) in root_components.iter().zip(&directory_components) {
         let left = left.as_os_str().to_str().ok_or_else(|| {
-            Error::new("invalid_encoding", "Directory name is not valid UTF-8", 1).at_file(root)
+            Error::new("invalid_encoding", Diagnostic::InvalidDirectoryEncoding, 1).at_file(root)
         })?;
         let right = right.as_os_str().to_str().ok_or_else(|| {
-            Error::new("invalid_encoding", "Directory name is not valid UTF-8", 1)
+            Error::new("invalid_encoding", Diagnostic::InvalidDirectoryEncoding, 1)
                 .at_file(directory)
         })?;
         if !Name::new(left).matches(right) {
@@ -429,7 +442,7 @@ fn relative_directory_names(root: &Path, directory: &Path) -> Result<Option<Vec<
                 .to_str()
                 .map(str::to_owned)
                 .ok_or_else(|| {
-                    Error::new("invalid_encoding", "Directory name is not valid UTF-8", 1)
+                    Error::new("invalid_encoding", Diagnostic::InvalidDirectoryEncoding, 1)
                         .at_file(directory)
                 })
         })
@@ -437,35 +450,51 @@ fn relative_directory_names(root: &Path, directory: &Path) -> Result<Option<Vec<
         .map(Some)
 }
 
-fn has_linked_directory(root: &Path, components: &[String]) -> Result<bool, Error> {
-    let mut path = root.to_owned();
-    for component in components {
-        path.push(component);
-        let metadata = match fs::symlink_metadata(&path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
-            Err(_) => return Ok(false),
-        };
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::FileTypeExt;
-            if metadata.file_type().is_symlink_dir() {
-                return Ok(true);
+impl IndexedDirectory {
+    fn new(name: String, path: std::path::PathBuf) -> Self {
+        let access = match fs::symlink_metadata(&path) {
+            Ok(metadata) => {
+                #[cfg(windows)]
+                let linked = {
+                    use std::os::windows::fs::FileTypeExt;
+                    metadata.file_type().is_symlink_dir()
+                };
+                #[cfg(not(windows))]
+                let linked = metadata.file_type().is_symlink();
+                if linked {
+                    DirectoryAccess::Skip
+                } else {
+                    DirectoryAccess::Readable
+                }
             }
-        }
-        #[cfg(not(windows))]
-        if metadata.file_type().is_symlink() {
-            return Ok(true);
+            Err(error) if error.kind() == io::ErrorKind::NotFound => DirectoryAccess::Skip,
+            Err(error) => DirectoryAccess::Failed(Error::io(error, &path)),
+        };
+        Self {
+            name_utf16: name.encode_utf16().chain(Some(0)).collect(),
+            name,
+            path,
+            has_description: false,
+            access,
+            children: BTreeMap::new(),
         }
     }
-    Ok(false)
 }
 
 fn collect_indexed_branch(
-    branch: &IndexedDirectory,
-    include_excluded: bool,
+    branch: IndexedDirectory,
     errors: &mut Vec<Error>,
 ) -> Result<Directory, Error> {
+    match branch.access {
+        DirectoryAccess::Readable => {}
+        DirectoryAccess::Skip => {
+            return Ok(Directory {
+                entries: Vec::new(),
+                children: Vec::new(),
+            });
+        }
+        DirectoryAccess::Failed(error) => return Err(error),
+    }
     let mut directories = BTreeSet::new();
     if branch.has_description {
         for entry in fs::read_dir(&branch.path).map_err(|error| Error::io(error, &branch.path))? {
@@ -491,15 +520,13 @@ fn collect_indexed_branch(
     } else {
         Vec::new()
     };
-    let mut children = branch.children.iter().collect::<Vec<_>>();
-    children.sort_by(|left, right| compare_names(&left.name_utf16(), &right.name_utf16()));
+    let mut children = branch.children.into_values().collect::<Vec<_>>();
+    children.sort_by(|left, right| compare_names(&left.name_utf16, &right.name_utf16));
     let mut subdirectories = Vec::new();
     for child in children {
-        if !include_excluded && is_default_excluded_directory(&child.name) {
-            continue;
-        }
-        match collect_indexed_branch(child, include_excluded, errors) {
-            Ok(directory) => subdirectories.push((child.name.clone(), directory)),
+        let name = child.name.clone();
+        match collect_indexed_branch(child, errors) {
+            Ok(directory) => subdirectories.push((name, directory)),
             Err(error) => errors.push(error),
         }
     }
@@ -507,12 +534,6 @@ fn collect_indexed_branch(
         entries,
         children: subdirectories,
     })
-}
-
-impl IndexedDirectory {
-    fn name_utf16(&self) -> Vec<u16> {
-        self.name.encode_utf16().chain(Some(0)).collect()
-    }
 }
 
 fn read_description(

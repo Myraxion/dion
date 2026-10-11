@@ -1,4 +1,7 @@
-use crate::{error::Error, name::Name};
+use crate::{
+    error::{Diagnostic, Error},
+    name::Name,
+};
 use std::{borrow::Cow, collections::BTreeSet, ops::Range};
 
 #[derive(serde::Serialize)]
@@ -40,7 +43,7 @@ pub fn parse_for_list(bytes: &[u8]) -> Result<(Vec<Record<'_>>, Vec<Error>), Err
 fn records(bytes: &[u8]) -> Result<impl Iterator<Item = Result<Record<'_>, Error>>, Error> {
     let body = bytes
         .strip_prefix(b"\xef\xbb\xbf")
-        .ok_or_else(|| Error::new("invalid_encoding", "Missing UTF-8 BOM", 1))?;
+        .ok_or_else(|| Error::new("invalid_encoding", Diagnostic::MissingUtf8Bom, 1))?;
     let mut names = BTreeSet::new();
     let mut remaining = body;
     let mut line_number = 0;
@@ -83,19 +86,24 @@ fn parse_record<'a>(
     line_number: usize,
     names: &mut BTreeSet<Name>,
 ) -> Result<Record<'a>, Error> {
-    let line = std::str::from_utf8(bytes)
-        .map_err(|_| at_line("invalid_encoding", "Record is not valid UTF-8", line_number))?;
+    let line = std::str::from_utf8(bytes).map_err(|_| {
+        at_line(
+            "invalid_encoding",
+            Diagnostic::InvalidRecordEncoding,
+            line_number,
+        )
+    })?;
     if range.len() > 4096 {
         return Err(at_line(
             "invalid_format",
-            "Physical record exceeds 4096 bytes",
+            Diagnostic::PhysicalRecordTooLong,
             line_number,
         ));
     }
     let (name, comment) = if let Some(quoted) = line.strip_prefix('"') {
         let close = quoted
             .find('"')
-            .ok_or_else(|| at_line("invalid_format", "Unclosed name quote", line_number))?;
+            .ok_or_else(|| at_line("invalid_format", Diagnostic::UnclosedNameQuote, line_number))?;
         let tail = &quoted[close + 1..];
         (
             &quoted[..close],
@@ -105,7 +113,7 @@ fn parse_record<'a>(
                 tail.strip_prefix(' ').ok_or_else(|| {
                     at_line(
                         "invalid_format",
-                        "Expected a space after quoted name",
+                        Diagnostic::ExpectedASpaceAfterQuotedName,
                         line_number,
                     )
                 })?
@@ -117,14 +125,14 @@ fn parse_record<'a>(
     if name.is_empty() {
         return Err(at_line(
             "invalid_format",
-            "Record name is empty",
+            Diagnostic::RecordNameIsEmpty,
             line_number,
         ));
     }
     if !names.insert(Name::new(name)) {
         return Err(at_line(
             "invalid_format",
-            "Duplicate record name (case insensitive)",
+            Diagnostic::DuplicateRecordName,
             line_number,
         ));
     }
@@ -151,7 +159,7 @@ pub fn set(original: Option<&[u8]>, name: &str, body: &str) -> Result<Option<Vec
         if matches!(record.extension, Extension::Unknown) {
             return Err(Error::new(
                 "unknown_extension",
-                "Unknown extension; cannot modify this record",
+                Diagnostic::UnknownExtension,
                 1,
             ));
         }
@@ -174,7 +182,7 @@ pub fn set(original: Option<&[u8]>, name: &str, body: &str) -> Result<Option<Vec
         format!("{name} {body}\r\n")
     };
     if record.len() > 4096 {
-        let mut error = Error::new("invalid_format", "Serialized record exceeds 4096 bytes", 1);
+        let mut error = Error::new("invalid_format", Diagnostic::SerializedRecordTooLong, 1);
         error.line = target.map(|record| record.line);
         return Err(error);
     }
@@ -192,7 +200,7 @@ pub fn set(original: Option<&[u8]>, name: &str, body: &str) -> Result<Option<Vec
             {
                 return Err(at_line(
                     "invalid_format",
-                    "Final record exceeds 4096 bytes after adding CRLF",
+                    Diagnostic::FinalRecordTooLong,
                     record.line,
                 ));
             }
@@ -248,7 +256,7 @@ fn decode_tc(body: &str) -> String {
     decoded
 }
 
-fn at_line(code: &'static str, message: &str, line: usize) -> Error {
+fn at_line(code: &'static str, message: Diagnostic, line: usize) -> Error {
     let mut error = Error::new(code, message, 1);
     error.line = Some(line);
     error

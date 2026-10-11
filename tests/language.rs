@@ -122,3 +122,34 @@ fn auto_overrides_the_environment_and_terminator_keeps_values_literal() {
         b"\xef\xbb\xbf\r\ntarget.txt --lang\r\n"
     );
 }
+
+#[test]
+fn json_mode_respects_consumed_instance_names_and_real_options_after_them() {
+    let literal = run(
+        &["list", "--everything-instance", "--json", "--lang", "en"],
+        None,
+    );
+    assert_eq!(literal.status.code(), Some(2));
+    assert!(literal.stdout.is_empty());
+    assert!(
+        String::from_utf8(literal.stderr)
+            .unwrap()
+            .starts_with("invalid_argument:")
+    );
+
+    let explicit = run(
+        &[
+            "list",
+            "--everything-instance",
+            "--",
+            "--json",
+            "--lang",
+            "en",
+        ],
+        None,
+    );
+    assert_eq!(explicit.status.code(), Some(2));
+    assert!(explicit.stdout.is_empty());
+    let error: serde_json::Value = serde_json::from_slice(&explicit.stderr).unwrap();
+    assert_eq!(error["error"]["code"], "invalid_argument");
+}

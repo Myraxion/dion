@@ -1,6 +1,11 @@
 use crate::{
-    comment, editor, error::Error, everything, help, i18n::Language, listing, name::Name, storage,
-    terminal,
+    comment, editor,
+    error::{Diagnostic, Error},
+    everything, help,
+    i18n::Language,
+    listing,
+    name::Name,
+    storage, terminal,
 };
 use std::{
     env,
@@ -12,12 +17,8 @@ use std::{
 
 pub fn run() -> ExitCode {
     let args: Vec<_> = env::args_os().skip(1).collect();
-    let language = language_option(&args).unwrap_or_else(Language::from_environment);
-    let json = args
-        .iter()
-        .take_while(|arg| *arg != "--")
-        .any(|arg| arg == "--json" || arg == "-j");
-    match parse_args(&args).and_then(|args| execute(&args, json, language)) {
+    let (json, language) = output_options(&args);
+    match parse_args(&args).and_then(|args| execute(&args, args.json, language)) {
         Ok(code) => ExitCode::from(code),
         Err(error) => {
             let mut stderr = io::stderr().lock();
@@ -48,6 +49,7 @@ enum ColorMode {
 }
 
 struct Arguments {
+    json: bool,
     positional: Vec<OsString>,
     source: Option<CommentSource>,
     long: bool,
@@ -62,7 +64,6 @@ struct Arguments {
 
 fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
     let mut positional = Vec::new();
-    let mut after_separator = false;
     let mut json_seen = false;
     let mut source = None;
     let mut long = false;
@@ -74,24 +75,24 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
     let mut use_everything = false;
     let mut everything_instance = None;
     let mut language = None;
-    let mut args = args.iter();
-    while let Some(arg) = args.next() {
-        if after_separator {
-            positional.push(arg.clone());
-        } else if arg == "--" {
-            after_separator = true;
-        } else if (arg == "--json" || arg == "-j") && !json_seen {
+    for token in argument_tokens(args) {
+        let (arg, value) = match token {
+            ArgumentToken::Positional(arg) => {
+                positional.push(arg.clone());
+                continue;
+            }
+            ArgumentToken::Option(arg, value) => (arg, value),
+        };
+        if (arg == "--json" || arg == "-j") && !json_seen {
             json_seen = true;
         } else if arg == "--lang" && language.is_none() {
-            let value = args
-                .next()
+            let value = value
                 .and_then(|value| value.to_str())
-                .ok_or_else(|| {
-                    Error::new("invalid_argument", "--lang requires en, zh-CN or auto", 2)
-                })?;
-            language = Some(Language::resolve_option(value).ok_or_else(|| {
-                Error::new("invalid_argument", "--lang requires en, zh-CN or auto", 2)
-            })?);
+                .ok_or_else(|| Error::new("invalid_argument", Diagnostic::InvalidLanguage, 2))?;
+            language =
+                Some(Language::resolve_option(value).ok_or_else(|| {
+                    Error::new("invalid_argument", Diagnostic::InvalidLanguage, 2)
+                })?);
         } else if (arg == "--help" || arg == "-h") && !help {
             help = true;
         } else if (arg == "--long" || arg == "-l") && !long {
@@ -103,14 +104,13 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
         } else if arg == "--everything" && !use_everything {
             use_everything = true;
         } else if arg == "--everything-instance" && everything_instance.is_none() {
-            let value = args
-                .next()
+            let value = value
                 .and_then(|value| value.to_str())
                 .filter(|value| !value.is_empty())
                 .ok_or_else(|| {
                     Error::new(
                         "invalid_argument",
-                        "--everything-instance requires a name",
+                        Diagnostic::EverythingInstanceRequiresAName,
                         2,
                     )
                 })?;
@@ -118,26 +118,15 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
         } else if (arg == "--all" || arg == "-a") && !include_excluded {
             include_excluded = true;
         } else if arg == "--color" && color.is_none() {
-            let value = args
-                .next()
+            let value = value
                 .and_then(|value| value.to_str())
-                .ok_or_else(|| {
-                    Error::new(
-                        "invalid_argument",
-                        "--color requires auto, always or never",
-                        2,
-                    )
-                })?;
+                .ok_or_else(|| Error::new("invalid_argument", Diagnostic::InvalidColor, 2))?;
             color = Some(match value {
                 "auto" => ColorMode::Auto,
                 "always" => ColorMode::Always,
                 "never" => ColorMode::Never,
                 _ => {
-                    return Err(Error::new(
-                        "invalid_argument",
-                        "--color requires auto, always or never",
-                        2,
-                    ));
+                    return Err(Error::new("invalid_argument", Diagnostic::InvalidColor, 2));
                 }
             });
         } else if (arg == "--stdin"
@@ -153,17 +142,17 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
             } else if arg == "--edit" || arg == "-e" {
                 CommentSource::Edit
             } else {
-                let file = args.next().filter(|arg| {
-                    !arg.to_str().is_some_and(|arg| arg.starts_with('-'))
-                }).ok_or_else(|| {
-                    Error::new("invalid_argument", "--comment-file requires a file; prefix a filename starting with - with ./", 2)
-                })?;
+                let file = value
+                    .filter(|arg| !arg.to_str().is_some_and(|arg| arg.starts_with('-')))
+                    .ok_or_else(|| {
+                        Error::new("invalid_argument", Diagnostic::CommentFileRequired, 2)
+                    })?;
                 CommentSource::File(PathBuf::from(file))
             });
         } else if arg.to_str().is_some_and(|arg| arg.starts_with('-')) {
             return Err(Error::new(
                 "invalid_argument",
-                "Unknown or repeated option; use -- before a path starting with -",
+                Diagnostic::UnknownOrRepeatedOption,
                 2,
             ));
         } else {
@@ -173,11 +162,12 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
     if tree && long {
         return Err(Error::new(
             "invalid_argument",
-            "--tree and --long are mutually exclusive",
+            Diagnostic::TreeAndLongAreMutuallyExclusive,
             2,
         ));
     }
     Ok(Arguments {
+        json: json_seen,
         positional,
         source,
         long,
@@ -197,11 +187,7 @@ fn execute(arguments: &Arguments, json: bool, language: Language) -> Result<u8, 
     if arguments.help || args.first().is_some_and(|arg| arg == "help") {
         let topic = if args.first().is_some_and(|arg| arg == "help") {
             if args.len() > 2 {
-                return Err(Error::new(
-                    "invalid_argument",
-                    "Usage: dion help [command]",
-                    2,
-                ));
+                return Err(Error::new("invalid_argument", Diagnostic::HelpUsage, 2));
             }
             args.get(1)
         } else {
@@ -214,7 +200,7 @@ fn execute(arguments: &Arguments, json: bool, language: Language) -> Result<u8, 
                 .map(command_name)
                 .and_then(|command| help::command_for(command, language)),
         }
-        .ok_or_else(|| Error::new("invalid_argument", "Unknown help command", 2))?;
+        .ok_or_else(|| Error::new("invalid_argument", Diagnostic::UnknownHelpCommand, 2))?;
         return io::stdout()
             .lock()
             .write_all(text.as_bytes())
@@ -232,21 +218,21 @@ fn execute(arguments: &Arguments, json: bool, language: Language) -> Result<u8, 
     {
         return Err(Error::new(
             "invalid_argument",
-            "--long, --recursive, --tree, --all, --color, --everything and --everything-instance are only supported by list",
+            Diagnostic::ListOptionsOnly,
             2,
         ));
     }
     if arguments.everything_instance.is_some() && !arguments.everything {
         return Err(Error::new(
             "invalid_argument",
-            "--everything-instance requires --everything",
+            Diagnostic::EverythingInstanceRequiresEverything,
             2,
         ));
     }
     if arguments.everything && !arguments.recursive && !arguments.tree {
         return Err(Error::new(
             "invalid_argument",
-            "--everything requires --recursive or --tree",
+            Diagnostic::EverythingRequiresRecursiveOrTree,
             2,
         ));
     }
@@ -261,48 +247,74 @@ fn execute(arguments: &Arguments, json: bool, language: Language) -> Result<u8, 
         Some("set") if args.len() == if arguments.source.is_some() { 2 } else { 3 } => {
             set(args, arguments.source.as_ref(), json).map(|()| 0)
         }
-        _ => Err(Error::new(
-            "invalid_argument",
-            "Usage: dion [--json|-j] get <path> | remove <path> | list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--everything [--everything-instance <name>]] [--all|-a] [--color auto|always|never] | set <path> (<comment> | --stdin|-i | --comment-file|-f <file> | --edit|-e); use dion help for command aliases",
-            2,
-        )),
+        _ => Err(Error::new("invalid_argument", Diagnostic::CommandUsage, 2)),
     }
 }
 
-fn language_option(args: &[OsString]) -> Option<Language> {
-    // This prepass finds the language before parsing can stop at an earlier error.
-    // Keep its value consumption aligned with parse_args so option values stay literal.
-    let mut index = 0;
-    let mut color_seen = false;
+enum ArgumentToken<'a> {
+    Positional(&'a OsString),
+    Option(&'a OsString, Option<&'a OsString>),
+}
+
+/// Shares value consumption between parsing and diagnostics after an earlier error.
+fn argument_tokens(args: &[OsString]) -> impl Iterator<Item = ArgumentToken<'_>> {
+    let mut args = args.iter();
+    let mut after_separator = false;
+    let mut value_options = [false; 3];
     let mut source_seen = false;
-    while index < args.len() {
-        let argument = args[index].to_str()?;
-        if argument == "--" {
-            break;
+    std::iter::from_fn(move || {
+        loop {
+            let arg = args.next()?;
+            if after_separator {
+                return Some(ArgumentToken::Positional(arg));
+            }
+            if arg == "--" {
+                after_separator = true;
+                continue;
+            }
+            let Some(name) = arg.to_str().filter(|name| name.starts_with('-')) else {
+                return Some(ArgumentToken::Positional(arg));
+            };
+            let value_index = match name {
+                "--lang" => Some(0),
+                "--color" => Some(1),
+                "--everything-instance" => Some(2),
+                _ => None,
+            };
+            let takes_value = if let Some(index) = value_index {
+                !std::mem::replace(&mut value_options[index], true)
+            } else if matches!(
+                name,
+                "--stdin" | "-i" | "--edit" | "-e" | "--comment-file" | "-f"
+            ) {
+                !std::mem::replace(&mut source_seen, true)
+                    && matches!(name, "--comment-file" | "-f")
+            } else {
+                false
+            };
+            let value = if takes_value { args.next() } else { None };
+            return Some(ArgumentToken::Option(arg, value));
         }
-        if argument == "--lang" {
-            let value = args.get(index + 1)?.to_str()?;
-            return Language::resolve_option(value);
+    })
+}
+
+fn output_options(args: &[OsString]) -> (bool, Language) {
+    let mut json = false;
+    let mut language = None;
+    let mut language_seen = false;
+    for token in argument_tokens(args) {
+        if let ArgumentToken::Option(arg, value) = token {
+            if arg == "--json" || arg == "-j" {
+                json = true;
+            } else if arg == "--lang" && !language_seen {
+                language_seen = true;
+                language = value
+                    .and_then(|value| value.to_str())
+                    .and_then(Language::resolve_option);
+            }
         }
-        if argument == "--everything-instance" {
-            index += 2;
-            continue;
-        }
-        if argument == "--color" && !color_seen {
-            color_seen = true;
-            index += 2;
-            continue;
-        }
-        if !source_seen && matches!(argument, "--stdin" | "-i" | "--edit" | "-e") {
-            source_seen = true;
-        } else if !source_seen && matches!(argument, "--comment-file" | "-f") {
-            source_seen = true;
-            index += 2;
-            continue;
-        }
-        index += 1;
     }
-    None
+    (json, language.unwrap_or_else(Language::from_environment))
 }
 
 fn command_name(name: &str) -> &str {
@@ -319,10 +331,10 @@ fn remove(args: &[OsString], json: bool) -> Result<(), Error> {
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or_else(|| Error::new("invalid_argument", "Path must have a UTF-8 entry name", 2))?;
+        .ok_or_else(|| Error::new("invalid_argument", Diagnostic::InvalidEntryName, 2))?;
     let file = path
         .parent()
-        .ok_or_else(|| Error::new("invalid_argument", "Path has no parent", 2))?
+        .ok_or_else(|| Error::new("invalid_argument", Diagnostic::PathHasNoParent, 2))?
         .join("descript.ion");
     let original = storage::read(&file)?;
     let changed = remove_record(&file, original.as_deref(), name)?;
@@ -352,11 +364,11 @@ fn set(args: &[OsString], source: Option<&CommentSource>, json: bool) -> Result<
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or_else(|| Error::new("invalid_argument", "Path must have a UTF-8 entry name", 2))?;
+        .ok_or_else(|| Error::new("invalid_argument", Diagnostic::InvalidEntryName, 2))?;
     let body = match source {
         None => args[2]
             .to_str()
-            .ok_or_else(|| Error::new("invalid_argument", "Comment must be UTF-8", 2))?
+            .ok_or_else(|| Error::new("invalid_argument", Diagnostic::InvalidCommentEncoding, 2))?
             .to_owned(),
         Some(source) => read_comment(source)?,
     };
@@ -364,7 +376,7 @@ fn set(args: &[OsString], source: Option<&CommentSource>, json: bool) -> Result<
     std::fs::symlink_metadata(&path).map_err(|error| Error::io(error, &path))?;
     let file = path
         .parent()
-        .ok_or_else(|| Error::new("invalid_argument", "Path has no parent", 2))?
+        .ok_or_else(|| Error::new("invalid_argument", Diagnostic::PathHasNoParent, 2))?
         .join("descript.ion");
     let original = storage::read(&file)?;
     let bytes =
@@ -396,14 +408,18 @@ fn read_comment(source: &CommentSource) -> Result<String, Error> {
         CommentSource::Edit => {
             return Err(Error::new(
                 "invalid_argument",
-                "Editing requires a target path",
+                Diagnostic::EditingRequiresATargetPath,
                 2,
             ));
         }
     };
     let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
     std::str::from_utf8(bytes).map(str::to_owned).map_err(|_| {
-        let error = Error::new("invalid_encoding", "Comment input is not valid UTF-8", 1);
+        let error = Error::new(
+            "invalid_encoding",
+            Diagnostic::InvalidCommentInputEncoding,
+            1,
+        );
         match source {
             CommentSource::File(file) => error.at_file(file),
             CommentSource::Stdin => error,
@@ -416,7 +432,7 @@ fn validate_body(body: &str) -> Result<String, Error> {
     if body.trim().is_empty() || body.contains(['\0', '\u{4}']) {
         return Err(Error::new(
             "invalid_argument",
-            "A nonblank comment without NUL or control character 04 is required",
+            Diagnostic::InvalidCommentBody,
             2,
         ));
     }
@@ -448,10 +464,10 @@ fn edit_comment(path: &std::path::Path) -> Result<bool, Error> {
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or_else(|| Error::new("invalid_argument", "Path must have a UTF-8 entry name", 2))?;
+        .ok_or_else(|| Error::new("invalid_argument", Diagnostic::InvalidEntryName, 2))?;
     let file = path
         .parent()
-        .ok_or_else(|| Error::new("invalid_argument", "Path has no parent", 2))?
+        .ok_or_else(|| Error::new("invalid_argument", Diagnostic::PathHasNoParent, 2))?
         .join("descript.ion");
     let original = storage::read(&file)?;
     let records = original
@@ -473,7 +489,7 @@ fn edit_comment(path: &std::path::Path) -> Result<bool, Error> {
         if storage::read(&file)? != original {
             return Err(Error::new(
                 "content_changed",
-                "Description file content changed while editing",
+                Diagnostic::DescriptionFileContentChangedWhileEditing,
                 1,
             )
             .at_file(&file));
@@ -536,10 +552,13 @@ fn list(arguments: &Arguments, json: bool, language: Language) -> Result<u8, Err
     let result = if json {
         write_json(
             &mut output,
-            &serde_json::json!({
-                "entries": entries,
-                "errors": errors.iter().map(|error| error.localized(language)).collect::<Vec<_>>()
-            }),
+            &ListOutput {
+                entries: &entries,
+                errors: errors
+                    .iter()
+                    .map(|error| error.localized(language))
+                    .collect(),
+            },
         )
     } else if arguments.long {
         listing::long(&mut output, &entries, use_color)
@@ -552,6 +571,12 @@ fn list(arguments: &Arguments, json: bool, language: Language) -> Result<u8, Err
     } else {
         finish_list(&mut output, &errors, !entries.is_empty(), language)
     }
+}
+
+#[derive(serde::Serialize)]
+struct ListOutput<'a> {
+    entries: &'a [listing::Entry],
+    errors: Vec<crate::error::LocalizedError<'a>>,
 }
 
 fn prepare_color(color_mode: ColorMode, json: bool) -> (bool, Option<terminal::ConsoleModeGuard>) {
@@ -602,12 +627,12 @@ fn get(args: &[OsString], json: bool) -> Result<(), Error> {
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or_else(|| Error::new("invalid_argument", "Path must have a UTF-8 entry name", 2))?;
+        .ok_or_else(|| Error::new("invalid_argument", Diagnostic::InvalidEntryName, 2))?;
     let file = path
         .parent()
-        .ok_or_else(|| Error::new("invalid_argument", "Path has no parent", 2))?
+        .ok_or_else(|| Error::new("invalid_argument", Diagnostic::PathHasNoParent, 2))?
         .join("descript.ion");
-    let not_found = || Error::new("not_found", "Comment not found", 3).at_file(&file);
+    let not_found = || Error::new("not_found", Diagnostic::CommentNotFound, 3).at_file(&file);
     let bytes = storage::read(&file)?.ok_or_else(not_found)?;
     let records = comment::parse(&bytes).map_err(|error| error.at_file(&file))?;
     let key = Name::new(name);
@@ -632,7 +657,11 @@ fn get(args: &[OsString], json: bool) -> Result<(), Error> {
 fn absolute_path(argument: &OsString) -> Result<PathBuf, Error> {
     let path = PathBuf::from(argument);
     if path.as_os_str().is_empty() {
-        return Err(Error::new("invalid_argument", "Path must not be empty", 2));
+        return Err(Error::new(
+            "invalid_argument",
+            Diagnostic::PathMustNotBeEmpty,
+            2,
+        ));
     }
     // Resolve dot components without following the target entry's symbolic link.
     std::path::absolute(&path)

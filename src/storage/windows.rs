@@ -1,4 +1,4 @@
-use crate::error::Error;
+use crate::error::{Diagnostic, Error, Message};
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
@@ -47,19 +47,19 @@ pub fn commit(file: &Path, original: Option<&[u8]>, bytes: &[u8]) -> Result<(), 
     let (mut output, recovery) = temporary
         .keep()
         .map_err(|error| Error::io(error.error, file))?;
-    let result = (|| -> io::Result<()> {
-        output.write_all(bytes)?;
-        output.sync_all()?;
+    let result = (|| -> Result<(), Error> {
+        output
+            .write_all(bytes)
+            .map_err(|error| Error::io(error, file))?;
+        output.sync_all().map_err(|error| Error::io(error, file))?;
         drop(output);
         // A rename can bypass the write-sharing guard. Check the current path again
         // before replacing it; the remaining check/replace race is outside our guarantee.
-        if super::read(&destination)
-            .map_err(|error| io::Error::other(error.message))?
-            .as_deref()
-            != original
-        {
-            return Err(io::Error::other(
-                "Description file content changed before commit",
+        if super::read(&destination)?.as_deref() != original {
+            return Err(Error::new(
+                "io_error",
+                Diagnostic::DescriptionFileContentChangedBeforeCommit,
+                1,
             ));
         }
         let replacement: Vec<_> = recovery.as_os_str().encode_wide().chain(Some(0)).collect();
@@ -82,28 +82,37 @@ pub fn commit(file: &Path, original: Option<&[u8]>, bytes: &[u8]) -> Result<(), 
                 )
             } else {
                 if SetFileAttributesW(replacement.as_ptr(), attributes) == 0 {
-                    return Err(io::Error::last_os_error());
+                    return Err(Error::io(io::Error::last_os_error(), file));
                 }
                 // Zero flags refuse to overwrite a file created since our initial read.
                 MoveFileExW(replacement.as_ptr(), destination.as_ptr(), 0)
             }
         };
         if success == 0 {
-            return Err(io::Error::last_os_error());
+            return Err(Error::io(io::Error::last_os_error(), file));
         }
         if original.is_some() {
             // ReplaceFile preserves creation time and DACLs. Restore the ordinary file
             // attributes explicitly; compression/encryption are preserved by ReplaceFile.
             // SAFETY: destination remains a live NUL-terminated UTF-16 path.
             if unsafe { SetFileAttributesW(destination.as_ptr(), attributes) } == 0 {
-                return Err(io::Error::last_os_error());
+                return Err(Error::io(io::Error::last_os_error(), file));
             }
         }
         Ok(())
     })();
-    result.map_err(|error| Error::new("io_error", format!(
-        "Commit failed: {error}. Inspect description file {} and temporary file {} for recovery; replacement may be partially complete",
-        parent.join("descript.ion").display(), recovery.display()), 1).at_file(file))
+    result.map_err(|error| {
+        Error::new(
+            "io_error",
+            Message::Commit {
+                detail: error.message,
+                description: parent.join("descript.ion"),
+                temporary: recovery,
+            },
+            1,
+        )
+        .at_file(file)
+    })
 }
 
 /// Deletes the last-record file after read-only and content checks, without retry.
@@ -114,7 +123,7 @@ pub fn remove(file: &Path, original: &[u8]) -> Result<(), Error> {
     if super::read(&destination)?.as_deref() != Some(original) {
         return Err(Error::new(
             "content_changed",
-            "Description file content changed before deletion",
+            Diagnostic::DescriptionFileContentChangedBeforeDeletion,
             1,
         )
         .at_file(file));
@@ -130,7 +139,7 @@ fn checked_source(destination: &Path, file: &Path, original: &[u8]) -> Result<(F
         .map_err(|error| Error::io(error, file))?;
     let metadata = source.metadata().map_err(|error| Error::io(error, file))?;
     if metadata.permissions().readonly() {
-        return Err(Error::new("io_error", "Description file is read-only", 1).at_file(file));
+        return Err(Error::new("io_error", Diagnostic::DescriptionFileIsReadOnly, 1).at_file(file));
     }
     let mut current = Vec::new();
     source
@@ -139,7 +148,7 @@ fn checked_source(destination: &Path, file: &Path, original: &[u8]) -> Result<(F
     if current != original {
         return Err(Error::new(
             "content_changed",
-            "Description file content changed before commit",
+            Diagnostic::DescriptionFileContentChangedBeforeCommit,
             1,
         )
         .at_file(file));

@@ -67,7 +67,7 @@ dion [--json|-j] <command> --help | -h
 - `set` 支持正文参数、`--stdin`、`--comment-file`、`--edit`，每次必须且只能选择一个输入来源。
 - 支持本地相对、绝对与 Windows 长路径，包括扩展路径 `\\?\D:\资料\条目`。路径中的 `.`、`..` 按词法处理，不解析最终链接目标。符号链接及目录联接自身的备注使用输入条目所在父目录的备注；`list` 链接目录时读取该目录内部的备注。
 - 磁盘根支持 `list`；对根自身执行 `get`、`set` 或 `remove` 报参数错误。
-- `--json` 可放在命令之前或路径之后。以 `-` 开头的路径或正文放在 `--` 后；以 `-` 开头的正文文件名使用 `./` 前缀，避免被当作选项。
+- `--json` 可放在命令之前或路径之后。选项消耗的值不再识别为选项或 `--` 分隔符，包括错误诊断的 JSON 模式和语言选择；例如 `--everything-instance --json` 的实例名称为 `--json`。以 `-` 开头的路径或正文放在 `--` 后；以 `-` 开头的正文文件名使用 `./` 前缀，避免被当作选项。
 
 ## 输入与正文
 
@@ -119,7 +119,7 @@ dion [--json|-j] <command> --help | -h
 - JSON `list` 结果是含 `entries` 和 `errors` 数组的对象。每条备注记录使用相同字段，名称不添加目录标记；查询范围内无有效记录时 `entries` 为空。每条错误使用既有 `code`、`message` 及适用的 `file`、`line` 字段，无错误时 `errors:[]`。双栏、单栏和 JSON 使用相同直接或普通递归记录顺序；文本排版选项不改变 JSON 内容。递归不增加辅助目录节点；双栏宽度按本次全部相对名称及目录标记计算。
 - 树 JSON 与同一起始目录的普通递归 JSON 完全相同，沿用普通递归顺序及字段，不包含辅助目录节点或文本目录标记。树模式复用普通递归的链接边界、显式链接起始目录及错误跳过规则。
 - JSON `set` 与 `remove` 结果含布尔字段 `changed`，表示是否实际发生修改。
-- JSON 错误包含 `error` 对象，内部有稳定的 `code` 和供人阅读的 `message`，适用时附带 `file`、`line`。错误代码为 `invalid_encoding`、`invalid_format`、`unknown_extension`、`content_changed`、`io_error`（退出码 1）、`invalid_argument`（退出码 2）、`not_found`（退出码 3）。
+- JSON 错误包含 `error` 对象，内部有稳定的 `code` 和供人阅读的 `message`，适用时附带 `file`、`line`。错误代码为 `invalid_encoding`、`invalid_format`、`unknown_extension`、`content_changed`、`io_error`、`everything_error`（退出码 1）、`invalid_argument`（退出码 2）、`not_found`（退出码 3）。
 - 退出码 0 表示成功，1 表示格式、编码、权限及其他 I/O 操作错误（包括 `list` 已输出部分或空列表并汇总了跳过的错误），2 表示参数错误，3 表示 `get` 未找到记录。
 - `get` 没有记录或备注文件时 stdout 为空，退出码 3；已有空记录返回 0。无法访问目录是操作错误，不能伪装成没有记录。
 - 非递归 `list` 的备注文件不存在、仅有 BOM 或合法空行时成功返回空列表；递归仍继续读取子目录。已有零字节文件因缺 BOM 报编码错误。`remove` 的记录或备注文件不存在时成功且不修改、不创建文件，JSON 返回 `changed:false`。

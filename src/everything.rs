@@ -1,4 +1,4 @@
-use crate::error::Error;
+use crate::error::{Diagnostic, Error};
 use std::path::{Path, PathBuf};
 
 /// Finds indexed `descript.ion` paths within a directory tree.
@@ -12,7 +12,7 @@ pub fn find_descriptions(directory: &Path, instance: Option<&str>) -> Result<Vec
         let _ = (directory, instance);
         Err(Error::new(
             "everything_error",
-            "Everything IPC is available only on Windows",
+            Diagnostic::EverythingRequiresWindows,
             1,
         ))
     }
@@ -165,7 +165,7 @@ mod windows {
             // SAFETY: A null module name requests this process's module handle.
             let instance = unsafe { GetModuleHandleW(ptr::null()) };
             if instance.is_null() {
-                return Err(last_error("Could not get the Dion module handle"));
+                return Err(last_error(Diagnostic::ModuleHandleFailed));
             }
             let class = WindowClass {
                 style: 0,
@@ -181,7 +181,7 @@ mod windows {
             };
             // SAFETY: The class definition and its UTF-16 name remain live through registration.
             if unsafe { RegisterClassW(&class) } == 0 {
-                return Err(last_error("Could not register the IPC reply window"));
+                return Err(last_error(Diagnostic::ReplyRegistrationFailed));
             }
             // SAFETY: This creates a message-only window owned by the current thread.
             let handle = unsafe {
@@ -203,7 +203,7 @@ mod windows {
             if handle.is_null() {
                 // SAFETY: Registration succeeded above and no window was created.
                 unsafe { UnregisterClassW(class_name.as_ptr(), instance) };
-                return Err(last_error("Could not create the IPC reply window"));
+                return Err(last_error(Diagnostic::ReplyWindowFailed));
             }
             Ok(Self {
                 handle,
@@ -229,7 +229,9 @@ mod windows {
     ) -> Result<Vec<PathBuf>, Error> {
         let metadata = std::fs::metadata(directory).map_err(|error| Error::io(error, directory))?;
         if !metadata.is_dir() {
-            return Err(Error::new("io_error", "Parent is not a directory", 1).at_file(directory));
+            return Err(
+                Error::new("io_error", Diagnostic::ParentIsNotADirectory, 1).at_file(directory)
+            );
         }
         drop(std::fs::read_dir(directory).map_err(|error| Error::io(error, directory))?);
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -242,7 +244,7 @@ mod windows {
         let result = wait_for_reply(deadline)?;
         let descriptions = parse_results(&result)?;
         if remaining_millis(deadline).is_none() {
-            return Err(ipc_error("Everything IPC timed out"));
+            return Err(ipc_error(Diagnostic::EverythingIpcTimedOut));
         }
         Ok(descriptions)
     }
@@ -254,7 +256,7 @@ mod windows {
         };
         for class_name in classes {
             if remaining_millis(deadline).is_none() {
-                return Err(ipc_error("Everything IPC timed out"));
+                return Err(ipc_error(Diagnostic::EverythingIpcTimedOut));
             }
             // SAFETY: The class name is a live, NUL-terminated UTF-16 string.
             let window = unsafe { FindWindowW(class_name.as_ptr(), ptr::null()) };
@@ -262,7 +264,7 @@ mod windows {
                 return Ok(window);
             }
         }
-        Err(ipc_error("Everything instance not found"))
+        Err(ipc_error(Diagnostic::EverythingInstanceNotFound))
     }
 
     fn window_class(instance: Option<&str>) -> Vec<u16> {
@@ -275,22 +277,22 @@ mod windows {
 
     fn ensure_database_loaded(window: Hwnd, deadline: Instant) -> Result<(), Error> {
         let version = [
-            send_window_message(window, 0, 0, deadline, "major version")? as u32,
-            send_window_message(window, 1, 0, deadline, "minor version")? as u32,
-            send_window_message(window, 2, 0, deadline, "revision")? as u32,
+            send_window_message(window, 0, 0, deadline, Diagnostic::MajorVersionFailed)? as u32,
+            send_window_message(window, 1, 0, deadline, Diagnostic::MinorVersionFailed)? as u32,
+            send_window_message(window, 2, 0, deadline, Diagnostic::RevisionFailed)? as u32,
         ];
         if version < [1, 4, 1] {
-            return Err(ipc_error("Everything 1.4.1 or later is required"));
+            return Err(ipc_error(Diagnostic::UnsupportedEverythingVersion));
         }
         let loaded = send_window_message(
             window,
             EVERYTHING_IPC_IS_DB_LOADED,
             0,
             deadline,
-            "database readiness",
+            Diagnostic::DatabaseReadinessFailed,
         )?;
         if loaded == 0 {
-            return Err(ipc_error("Everything database is not ready"));
+            return Err(ipc_error(Diagnostic::EverythingDatabaseIsNotReady));
         }
         Ok(())
     }
@@ -300,10 +302,10 @@ mod windows {
         command: usize,
         argument: isize,
         deadline: Instant,
-        description: &str,
+        description: Diagnostic,
     ) -> Result<usize, Error> {
-        let timeout =
-            remaining_millis(deadline).ok_or_else(|| ipc_error("Everything IPC timed out"))?;
+        let timeout = remaining_millis(deadline)
+            .ok_or_else(|| ipc_error(Diagnostic::EverythingIpcTimedOut))?;
         let mut result = 0;
         // SAFETY: The destination is the discovered Everything window; scalar message values are valid.
         let sent = unsafe {
@@ -319,7 +321,7 @@ mod windows {
         };
         if sent == 0 {
             return Err(ipc_error(if remaining_millis(deadline).is_none() {
-                "Everything IPC timed out"
+                Diagnostic::EverythingIpcTimedOut
             } else {
                 description
             }));
@@ -331,7 +333,7 @@ mod windows {
         let absolute =
             std::path::absolute(directory).map_err(|error| Error::io(error, directory))?;
         let path = absolute.to_str().ok_or_else(|| {
-            Error::new("invalid_encoding", "Directory name is not valid UTF-8", 1)
+            Error::new("invalid_encoding", Diagnostic::InvalidDirectoryEncoding, 1)
                 .at_file(directory)
         })?;
         let path = path.strip_prefix("\\\\?\\UNC\\").map_or_else(
@@ -352,8 +354,8 @@ mod windows {
         search: &[u16],
         deadline: Instant,
     ) -> Result<(), Error> {
-        let timeout =
-            remaining_millis(deadline).ok_or_else(|| ipc_error("Everything IPC timed out"))?;
+        let timeout = remaining_millis(deadline)
+            .ok_or_else(|| ipc_error(Diagnostic::EverythingIpcTimedOut))?;
         // Everything's IPC wire format uses 32-bit fields, including window handles, on x64.
         let mut request = Vec::with_capacity(20 + mem::size_of_val(search));
         let fields = [
@@ -370,7 +372,7 @@ mod windows {
             request.extend_from_slice(&unit.to_le_bytes());
         }
         let size = u32::try_from(request.len())
-            .map_err(|_| ipc_error("Everything IPC query is too large"))?;
+            .map_err(|_| ipc_error(Diagnostic::EverythingQueryTooLarge))?;
         let data = CopyDataStruct {
             data: EVERYTHING_IPC_COPYDATA_QUERY_W,
             size,
@@ -391,9 +393,9 @@ mod windows {
         };
         if sent == 0 || result == 0 {
             return Err(ipc_error(if remaining_millis(deadline).is_none() {
-                "Everything IPC timed out"
+                Diagnostic::EverythingIpcTimedOut
             } else {
-                "Everything rejected the IPC query"
+                Diagnostic::EverythingQueryRejected
             }));
         }
         Ok(())
@@ -404,8 +406,8 @@ mod windows {
             if let Some(reply) = QUERY_REPLY.with(|reply| reply.borrow_mut().take()) {
                 return Ok(reply);
             }
-            let timeout =
-                remaining_millis(deadline).ok_or_else(|| ipc_error("Everything IPC timed out"))?;
+            let timeout = remaining_millis(deadline)
+                .ok_or_else(|| ipc_error(Diagnostic::EverythingIpcTimedOut))?;
             // SAFETY: This thread has no wait handles; it waits for input to its own message queue.
             let result = unsafe {
                 MsgWaitForMultipleObjectsEx(
@@ -417,15 +419,15 @@ mod windows {
                 )
             };
             if result == WAIT_TIMEOUT {
-                return Err(ipc_error("Everything IPC timed out"));
+                return Err(ipc_error(Diagnostic::EverythingIpcTimedOut));
             }
             if result == WAIT_FAILED {
-                return Err(last_error("Could not wait for the Everything reply"));
+                return Err(last_error(Diagnostic::EverythingWaitFailed));
             }
             let mut message: Message = unsafe { mem::zeroed() };
             while unsafe { PeekMessageW(&mut message, ptr::null_mut(), 0, 0, PM_REMOVE) } != 0 {
                 if message.message == WM_QUIT {
-                    return Err(ipc_error("The IPC reply window was closed"));
+                    return Err(ipc_error(Diagnostic::ReplyWindowClosed));
                 }
                 // SAFETY: The message was removed from this thread's queue.
                 unsafe {
@@ -434,7 +436,7 @@ mod windows {
                 }
             }
             if result != WAIT_OBJECT_0 {
-                return Err(ipc_error("Could not wait for the Everything reply"));
+                return Err(ipc_error(Diagnostic::EverythingWaitFailed));
             }
         }
     }
@@ -448,10 +450,13 @@ mod windows {
         if message == WM_COPYDATA && lparam != 0 {
             // SAFETY: WM_COPYDATA supplies a valid COPYDATASTRUCT for the duration of this call.
             let data = unsafe { &*(lparam as *const CopyDataStruct) };
-            if data.data == QUERY_COMPLETE && data.size >= 28 && !data.bytes.is_null() {
+            if data.data == QUERY_COMPLETE && (data.size == 0 || !data.bytes.is_null()) {
                 // SAFETY: Windows guarantees cbData readable bytes during WM_COPYDATA processing.
-                let bytes =
-                    unsafe { slice::from_raw_parts(data.bytes.cast::<u8>(), data.size as usize) };
+                let bytes = if data.size == 0 {
+                    &[]
+                } else {
+                    unsafe { slice::from_raw_parts(data.bytes.cast::<u8>(), data.size as usize) }
+                };
                 QUERY_REPLY.with(|reply| *reply.borrow_mut() = Some(bytes.to_vec()));
                 return 1;
             }
@@ -466,7 +471,7 @@ mod windows {
 
     fn parse_results(bytes: &[u8]) -> Result<Vec<PathBuf>, Error> {
         if bytes.len() < 28 {
-            return Err(ipc_error("Everything returned an invalid result list"));
+            return Err(ipc_error(Diagnostic::InvalidEverythingReply));
         }
         let count = read_u32(bytes, 20)? as usize;
         let item_size = 12usize;
@@ -521,7 +526,7 @@ mod windows {
     }
 
     fn invalid_reply() -> Error {
-        ipc_error("Everything returned an invalid result list")
+        ipc_error(Diagnostic::InvalidEverythingReply)
     }
 
     fn remaining_millis(deadline: Instant) -> Option<u32> {
@@ -533,13 +538,17 @@ mod windows {
         )
     }
 
-    fn ipc_error(message: &str) -> Error {
+    fn ipc_error(message: Diagnostic) -> Error {
         Error::new("everything_error", message, 1)
     }
 
-    fn last_error(context: &str) -> Error {
+    fn last_error(context: Diagnostic) -> Error {
         // SAFETY: This API has no arguments and returns the calling thread's last error code.
         let code = unsafe { GetLastError() };
-        ipc_error(&format!("{context} (Windows error {code})"))
+        Error::new(
+            "everything_error",
+            crate::error::Message::Windows { context, code },
+            1,
+        )
     }
 }

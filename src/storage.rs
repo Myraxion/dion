@@ -1,4 +1,4 @@
-use crate::error::Error;
+use crate::error::{Diagnostic, Error};
 use std::{fs, io, path::Path};
 
 #[cfg(windows)]
@@ -9,12 +9,12 @@ pub use windows::{commit, remove};
 
 #[cfg(not(windows))]
 pub fn remove(file: &Path, _original: &[u8]) -> Result<(), Error> {
-    Err(Error::new("io_error", "Deleting comments requires Windows", 1).at_file(file))
+    Err(Error::new("io_error", Diagnostic::DeletingCommentsRequiresWindows, 1).at_file(file))
 }
 
 #[cfg(not(windows))]
 pub fn commit(file: &Path, _original: Option<&[u8]>, _bytes: &[u8]) -> Result<(), Error> {
-    Err(Error::new("io_error", "Writing comments requires Windows", 1).at_file(file))
+    Err(Error::new("io_error", Diagnostic::WritingCommentsRequiresWindows, 1).at_file(file))
 }
 
 pub fn read(file: &Path) -> Result<Option<Vec<u8>>, Error> {
@@ -28,7 +28,9 @@ pub fn read(file: &Path) -> Result<Option<Vec<u8>>, Error> {
                 .unwrap_or(Path::new("."));
             let metadata = fs::metadata(parent).map_err(|error| Error::io(error, file))?;
             if !metadata.is_dir() {
-                return Err(Error::new("io_error", "Parent is not a directory", 1).at_file(file));
+                return Err(
+                    Error::new("io_error", Diagnostic::ParentIsNotADirectory, 1).at_file(file)
+                );
             }
             Ok(None)
         }

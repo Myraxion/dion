@@ -1,4 +1,4 @@
-use crate::error::Error;
+use crate::error::{Diagnostic, Error, Message};
 use std::{
     io::Write,
     path::{Path, PathBuf},
@@ -22,9 +22,10 @@ pub fn create(body: &str) -> Result<PathBuf, Error> {
 }
 
 pub fn recovery(mut error: Error, text: &Path) -> Error {
-    error
-        .message
-        .push_str(&format!("; Edit text retained at {}", text.display()));
+    error.message = Box::new(Message::RetainedEdit {
+        source: error.message,
+        text: text.to_owned(),
+    });
     error
 }
 
@@ -62,7 +63,7 @@ pub fn run(text: &Path) -> Result<(), Error> {
     if program.is_empty() || quoted {
         return Err(Error::new(
             "invalid_argument",
-            "Invalid editor command line",
+            Diagnostic::InvalidEditorCommandLine,
             2,
         ));
     }
@@ -74,11 +75,11 @@ pub fn run(text: &Path) -> Result<(), Error> {
         .stderr(Stdio::null());
     let status = command
         .status()
-        .map_err(|error| Error::new("io_error", format!("Could not run editor: {error}"), 1))?;
+        .map_err(|error| Error::new("io_error", Message::EditorLaunch(error.to_string()), 1))?;
     if !status.success() {
         return Err(Error::new(
             "io_error",
-            format!("Editor exited unsuccessfully: {status}"),
+            Message::EditorExit(status.to_string()),
             1,
         ));
     }
@@ -89,7 +90,7 @@ pub fn run(text: &Path) -> Result<(), Error> {
 pub fn run(_text: &Path) -> Result<(), Error> {
     Err(Error::new(
         "io_error",
-        "Editing comments requires Windows",
+        Diagnostic::EditingCommentsRequiresWindows,
         1,
     ))
 }

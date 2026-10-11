@@ -1231,7 +1231,7 @@ fn list_rejects_extra_arguments_and_options_and_supports_directory_after_separat
         vec!["set", "a", "body", "--recursive", "--json"],
         vec!["remove", "a", "-r", "--json"],
         vec!["list", "--tree", "--tree", "--json"],
-        vec!["list", "--color", "--json"],
+        vec!["list", "--color", "--json", "--json"],
         vec!["list", "--color", "loud", "--json"],
         vec!["list", "--color=always", "--json"],
         vec!["list", "--color", "always", "--color", "never", "--json"],
