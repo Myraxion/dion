@@ -233,6 +233,9 @@ fn collect_directory(
     // Finish enumeration first: a failed directory contributes no partial contents.
     let mut directories = BTreeSet::new();
     let mut children = Vec::new();
+    static DESCRIPTION_NAME: OnceLock<Name> = OnceLock::new();
+    let description_name = DESCRIPTION_NAME.get_or_init(|| Name::new("descript.ion"));
+    let mut has_description = false;
     for entry in fs::read_dir(directory).map_err(|error| Error::io(error, directory))? {
         let entry = entry.map_err(|error| Error::io(error, directory))?;
         let kind = entry
@@ -245,8 +248,15 @@ fn collect_directory(
         };
         #[cfg(not(windows))]
         let is_directory = kind.is_dir();
+        let name = entry.file_name();
+        if !has_description
+            && name
+                .to_str()
+                .is_some_and(|name| description_name.matches(name))
+        {
+            has_description = true;
+        }
         if is_directory {
-            let name = entry.file_name();
             if let Some(name) = name.to_str() {
                 directories.insert(Name::new(name));
             }
@@ -269,12 +279,17 @@ fn collect_directory(
         }
     }
     let file = directory.join("descript.ion");
-    let bytes = match storage::read(&file) {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            errors.push(error);
-            None
+    // Enumeration is the observation point for absent description files.
+    let bytes = if has_description {
+        match storage::read(&file) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                errors.push(error);
+                None
+            }
         }
+    } else {
+        None
     };
     let records = match &bytes {
         Some(bytes) => match comment::parse_for_list(bytes) {

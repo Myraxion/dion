@@ -39,6 +39,7 @@
 - [命令别名与参数简写设计](archive/cli-alias-design.md)：`view`/`cat`、`ls`、`rm` 等命令别名与短选项规范。
 - [List 与外部编辑增强设计](archive/list-edit-design.md)：双栏、单栏、树状多行垂直引导线及外部编辑器冲突检测设计背景。
 - [List、编辑与帮助增强规格快照](archive/list-edit-spec.md)：[Issue #12](https://github.com/Myraxion/dion/issues/12) 开发期规格快照（已封存）。
+- [List 递归性能调研与验收](archive/list-recursive-performance-design.md)：目录枚举与备注读取的性能测量、方案取舍及同参数 Release 对照结果。
 
 ### 历史版本规划与取消范围
 

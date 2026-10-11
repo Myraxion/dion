@@ -957,6 +957,51 @@ fn explicit_relative_and_absolute_directories_show_complete_text_without_recursi
 }
 
 #[test]
+#[cfg(windows)]
+fn description_discovery_preserves_case_variants_and_descendants_of_empty_directories() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::create_dir_all(directory.path().join("middle/deep")).unwrap();
+    fs::write(
+        directory.path().join("DESCRIPT.ION"),
+        "\u{feff}root root note",
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("middle/deep/Descript.Ion"),
+        "\u{feff}child child note",
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("middle/descript.ion.backup"),
+        b"not a description file",
+    )
+    .unwrap();
+
+    let direct = list(directory.path(), &["list", "--json"]);
+    assert_eq!(direct.status.code(), Some(0));
+    assert!(direct.stderr.is_empty());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&direct.stdout).unwrap(),
+        serde_json::json!({"entries": [
+            {"name": "root", "comment": "root note", "extension": "none"}
+        ], "errors": []})
+    );
+
+    for mode in ["--recursive", "--tree"] {
+        let result = list(directory.path(), &["list", mode, "--json"]);
+        assert_eq!(result.status.code(), Some(0));
+        assert!(result.stderr.is_empty());
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap(),
+            serde_json::json!({"entries": [
+                {"name": "root", "comment": "root note", "extension": "none"},
+                {"name": "middle\\deep\\child", "comment": "child note", "extension": "none"}
+            ], "errors": []})
+        );
+    }
+}
+
+#[test]
 fn missing_description_and_header_only_files_are_successful_empty_lists() {
     let directory = tempfile::tempdir().unwrap();
     for contents in [
