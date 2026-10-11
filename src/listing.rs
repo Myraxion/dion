@@ -464,22 +464,24 @@ fn collect_indexed_branch(
     errors: &mut Vec<Error>,
 ) -> Result<Directory, Error> {
     let mut directories = BTreeSet::new();
-    for entry in fs::read_dir(&branch.path).map_err(|error| Error::io(error, &branch.path))? {
-        let entry = entry.map_err(|error| Error::io(error, &branch.path))?;
-        let kind = entry
-            .file_type()
-            .map_err(|error| Error::io(error, &entry.path()))?;
-        #[cfg(windows)]
-        let is_directory = {
-            use std::os::windows::fs::FileTypeExt;
-            kind.is_dir() || kind.is_symlink_dir()
-        };
-        #[cfg(not(windows))]
-        let is_directory = kind.is_dir();
-        if is_directory
-            && let Some(name) = entry.file_name().to_str()
-        {
-            directories.insert(Name::new(name));
+    if branch.has_description {
+        for entry in fs::read_dir(&branch.path).map_err(|error| Error::io(error, &branch.path))? {
+            let entry = entry.map_err(|error| Error::io(error, &branch.path))?;
+            let kind = entry
+                .file_type()
+                .map_err(|error| Error::io(error, &entry.path()))?;
+            #[cfg(windows)]
+            let is_directory = {
+                use std::os::windows::fs::FileTypeExt;
+                kind.is_dir() || kind.is_symlink_dir()
+            };
+            #[cfg(not(windows))]
+            let is_directory = kind.is_dir();
+            if is_directory
+                && let Some(name) = entry.file_name().to_str()
+            {
+                directories.insert(Name::new(name));
+            }
         }
     }
     let file = branch.path.join("descript.ion");

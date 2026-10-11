@@ -234,6 +234,7 @@ mod windows {
         if !metadata.is_dir() {
             return Err(Error::new("io_error", "Parent is not a directory", 1).at_file(directory));
         }
+        drop(std::fs::read_dir(directory).map_err(|error| Error::io(error, directory))?);
         let deadline = Instant::now() + Duration::from_secs(5);
         let window = find_everything_window(instance, deadline)?;
         ensure_database_loaded(window, deadline)?;
