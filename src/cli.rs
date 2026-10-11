@@ -52,6 +52,7 @@ struct Arguments {
     long: bool,
     recursive: bool,
     tree: bool,
+    include_excluded: bool,
     help: bool,
     color: Option<ColorMode>,
 }
@@ -64,6 +65,7 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
     let mut long = false;
     let mut recursive = false;
     let mut tree = false;
+    let mut include_excluded = false;
     let mut help = false;
     let mut color = None;
     let mut language = None;
@@ -93,6 +95,8 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
             recursive = true;
         } else if (arg == "--tree" || arg == "-t") && !tree {
             tree = true;
+        } else if (arg == "--all" || arg == "-a") && !include_excluded {
+            include_excluded = true;
         } else if arg == "--color" && color.is_none() {
             let value = args
                 .next()
@@ -159,6 +163,7 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
         long,
         recursive,
         tree,
+        include_excluded,
         help,
         color,
     })
@@ -194,12 +199,16 @@ fn execute(arguments: &Arguments, json: bool, language: Language) -> Result<u8, 
             .map(|()| 0)
             .map_err(|error| Error::new("io_error", error.to_string(), 1));
     }
-    if (arguments.long || arguments.recursive || arguments.tree || arguments.color.is_some())
+    if (arguments.long
+        || arguments.recursive
+        || arguments.tree
+        || arguments.include_excluded
+        || arguments.color.is_some())
         && command != Some("list")
     {
         return Err(Error::new(
             "invalid_argument",
-            "--long, --recursive, --tree and --color are only supported by list",
+            "--long, --recursive, --tree, --all and --color are only supported by list",
             2,
         ));
     }
@@ -208,15 +217,9 @@ fn execute(arguments: &Arguments, json: bool, language: Language) -> Result<u8, 
         Some("remove") if args.len() == 2 && arguments.source.is_none() => {
             remove(args, json).map(|()| 0)
         }
-        Some("list") if args.len() <= 2 && arguments.source.is_none() => list(
-            args,
-            json,
-            arguments.long,
-            arguments.recursive,
-            arguments.tree,
-            arguments.color.unwrap_or(ColorMode::Auto),
-            language,
-        ),
+        Some("list") if args.len() <= 2 && arguments.source.is_none() => {
+            list(arguments, json, language)
+        }
         Some("set") if args.len() == if arguments.source.is_some() { 2 } else { 3 } => {
             set(args, arguments.source.as_ref(), json).map(|()| 0)
         }
@@ -452,28 +455,26 @@ fn edit_comment(path: &std::path::Path) -> Result<bool, Error> {
     result.map_err(|error| editor::recovery(error, &text))
 }
 
-fn list(
-    args: &[OsString],
-    json: bool,
-    long: bool,
-    recursive: bool,
-    tree: bool,
-    color_mode: ColorMode,
-    language: Language,
-) -> Result<u8, Error> {
+fn list(arguments: &Arguments, json: bool, language: Language) -> Result<u8, Error> {
+    let args = &arguments.positional;
+    let color_mode = arguments.color.unwrap_or(ColorMode::Auto);
     let directory = normalize_verbatim_path(
         args.get(1)
             .map_or_else(|| PathBuf::from("."), PathBuf::from),
     );
-    if tree && !json {
-        let (nodes, errors) = listing::collect_tree(&directory)?;
+    if arguments.tree && !json {
+        let (nodes, errors) = listing::collect_tree(&directory, arguments.include_excluded)?;
         let (use_color, _console_mode) = prepare_color(color_mode, json);
         let mut output = io::stdout().lock();
         listing::tree(&mut output, &nodes, use_color)
             .map_err(|error| Error::new("io_error", error.to_string(), 1))?;
         return finish_list(&mut output, &errors, !nodes.is_empty(), language);
     }
-    let (entries, errors) = listing::collect(&directory, recursive || tree)?;
+    let (entries, errors) = listing::collect(
+        &directory,
+        arguments.recursive || arguments.tree,
+        arguments.include_excluded,
+    )?;
     let (use_color, _console_mode) = prepare_color(color_mode, json);
     let mut output = io::stdout().lock();
     let result = if json {
@@ -484,7 +485,7 @@ fn list(
                 "errors": errors.iter().map(|error| error.localized(language)).collect::<Vec<_>>()
             }),
         )
-    } else if long {
+    } else if arguments.long {
         listing::long(&mut output, &entries, use_color)
     } else {
         listing::columns(&mut output, &entries, use_color)

@@ -5,6 +5,7 @@ use std::{
     fs,
     io::{self, Write},
     path::Path,
+    sync::OnceLock,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -59,10 +60,15 @@ pub fn long(output: &mut impl Write, entries: &[Entry], color: bool) -> io::Resu
 }
 
 /// Collects valid records and diagnostics before rendering.
-pub fn collect(directory: &Path, recursive: bool) -> Result<(Vec<Entry>, Vec<Error>), Error> {
+pub fn collect(
+    directory: &Path,
+    recursive: bool,
+    include_excluded: bool,
+) -> Result<(Vec<Entry>, Vec<Error>), Error> {
     let mut entries = Vec::new();
     let mut errors = Vec::new();
-    collect_directory(directory, recursive, &mut errors)?.flatten("", &mut entries);
+    collect_directory(directory, recursive, include_excluded, &mut errors)?
+        .flatten("", &mut entries);
     Ok((entries, errors))
 }
 
@@ -134,9 +140,12 @@ pub struct TreeNode {
 }
 
 /// Uses the same traversal and diagnostics as the ordinary recursive list.
-pub fn collect_tree(directory: &Path) -> Result<(Vec<TreeNode>, Vec<Error>), Error> {
+pub fn collect_tree(
+    directory: &Path,
+    include_excluded: bool,
+) -> Result<(Vec<TreeNode>, Vec<Error>), Error> {
     let mut errors = Vec::new();
-    let nodes = collect_directory(directory, true, &mut errors)?.into_tree();
+    let nodes = collect_directory(directory, true, include_excluded, &mut errors)?.into_tree();
     Ok((nodes, errors))
 }
 
@@ -218,6 +227,7 @@ fn write_name(output: &mut impl Write, name: &str, marker: &str, color: bool) ->
 fn collect_directory(
     directory: &Path,
     recursive: bool,
+    include_excluded: bool,
     errors: &mut Vec<Error>,
 ) -> Result<Directory, Error> {
     // Finish enumeration first: a failed directory contributes no partial contents.
@@ -250,6 +260,9 @@ fn collect_directory(
                             .at_file(&entry.path())
                     })?
                     .to_owned();
+                if !include_excluded && is_default_excluded_directory(&name) {
+                    continue;
+                }
                 let key: Vec<_> = name.encode_utf16().chain(Some(0)).collect();
                 children.push((name, key, entry.path()));
             }
@@ -295,7 +308,7 @@ fn collect_directory(
     children.sort_by(|a, b| compare_names(&a.1, &b.1));
     let mut subdirectories = Vec::new();
     for (name, _, path) in children {
-        match collect_directory(&path, true, errors) {
+        match collect_directory(&path, true, include_excluded, errors) {
             Ok(child) => subdirectories.push((name, child)),
             Err(error) => errors.push(error),
         }
@@ -304,6 +317,31 @@ fn collect_directory(
         entries,
         children: subdirectories,
     })
+}
+
+fn is_default_excluded_directory(name: &str) -> bool {
+    static EXCLUDED: OnceLock<[Name; 14]> = OnceLock::new();
+    let name = Name::new(name);
+    EXCLUDED
+        .get_or_init(|| {
+            [
+                Name::new("$RECYCLE.BIN"),
+                Name::new("System Volume Information"),
+                Name::new(".git"),
+                Name::new("node_modules"),
+                Name::new(".venv"),
+                Name::new("__pycache__"),
+                Name::new(".pytest_cache"),
+                Name::new(".next"),
+                Name::new(".svn"),
+                Name::new(".mypy_cache"),
+                Name::new(".ruff_cache"),
+                Name::new(".tox"),
+                Name::new(".nox"),
+                Name::new(".parcel-cache"),
+            ]
+        })
+        .contains(&name)
 }
 
 fn compare_names(a: &[u16], b: &[u16]) -> Ordering {

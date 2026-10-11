@@ -25,7 +25,7 @@ Language / 语言： [English](README.en.md) | 简体中文
 dion help [command]
 dion [--json|-j] get <path>
 dion [--json|-j] set <path> (<comment> | --comment-file|-f <file> | --stdin|-i | --edit|-e)
-dion [--json|-j] list [directory] [--long|-l | --tree|-t] [--recursive|-r] [--color auto|always|never]
+dion [--json|-j] list [directory] [--long|-l | --tree|-t] [--recursive|-r] [--all|-a] [--color auto|always|never]
 dion [--json|-j] remove <path>
 ```
 
@@ -38,7 +38,7 @@ dion [--json|-j] remove <path>
 | `set` | 无 |
 | `remove` | `rm`、`unset`、`del` |
 
-选项短写：`--json/-j`、`--help/-h`、`--long/-l`、`--recursive/-r`、`--tree/-t`、`--stdin/-i`、`--comment-file/-f`、`--edit/-e`。例如：
+选项短写：`--json/-j`、`--help/-h`、`--long/-l`、`--recursive/-r`、`--tree/-t`、`--all/-a`、`--stdin/-i`、`--comment-file/-f`、`--edit/-e`。例如：
 
 ```text
 dion cat file.txt
@@ -62,6 +62,8 @@ dion unset file.txt -j
   - 默认双栏对齐展示。
   - `--long`（`-l`）：单栏详细展示，完整呈现多行正文。
   - `--recursive`（`-r`）：递归汇总子目录的备注。
+  - 默认递归跳过 `$RECYCLE.BIN`、`System Volume Information`、`.git`、`node_modules`、`.venv`、`__pycache__`、`.pytest_cache`、`.next`、`.svn`、`.mypy_cache`、`.ruff_cache`、`.tox`、`.nox` 和 `.parcel-cache`；按完整目录名称不区分大小写匹配，主动跳过不报错。目录自身备注仍显示。
+  - `--all`（`-a`）：递归时包含上述默认排除目录；单独用于非递归列表时不改变结果。
   - `--tree`：树状层级展开展示（自动递归；与 `--long` 互斥）。
   - `--color auto|always|never`：默认仅在支持颜色的终端为名称着色；可强制开启或关闭，JSON 始终无颜色。
   - 默认跳过坏记录或无法读取的备注文件，继续查询；无法枚举的子目录整体跳过，起始目录无法访问时直接失败。

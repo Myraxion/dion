@@ -76,6 +76,124 @@ fn color_always_styles_names_in_every_text_layout_but_not_json() {
 }
 
 #[test]
+fn recursive_list_skips_default_directories_and_all_restores_them() {
+    let directory = tempfile::tempdir().unwrap();
+    let excluded = [
+        "$RECYCLE.BIN",
+        "System Volume Information",
+        ".git",
+        "node_modules",
+        ".venv",
+        "__pycache__",
+        ".pytest_cache",
+        ".next",
+        ".svn",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".tox",
+        ".nox",
+        ".parcel-cache",
+    ];
+    let mut root_records = String::from("\u{feff}visible visible directory note\n");
+    for name in excluded {
+        let child = directory.path().join(name);
+        fs::create_dir(&child).unwrap();
+        fs::write(
+            child.join("descript.ion"),
+            format!("\u{feff}inside {name} note"),
+        )
+        .unwrap();
+        root_records.push_str(&format!("{name} {name} directory note\n"));
+    }
+    let nested = directory.path().join("visible/.VeNv");
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(nested.join("descript.ion"), "\u{feff}deep deep note").unwrap();
+    root_records.push_str(".git-backup ordinary directory note\n");
+    fs::create_dir(directory.path().join(".git-backup")).unwrap();
+    fs::write(directory.path().join("descript.ion"), root_records).unwrap();
+
+    let result = list(directory.path(), &["list", "-r", "--json"]);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result.stderr);
+    let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    let names: Vec<_> = value["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&".git"));
+    assert!(names.contains(&"visible"));
+    assert!(names.contains(&".git-backup"));
+    assert!(!names.contains(&"visible\\.VeNv\\deep"));
+    assert!(!names.iter().any(|name| name.contains("\\inside")));
+    assert_eq!(value["errors"], serde_json::json!([]));
+
+    let result = list(directory.path(), &["list", "--tree"]);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result.stderr);
+    let tree = String::from_utf8(result.stdout).unwrap();
+    assert!(tree.contains(".git\\  .git directory note"));
+    assert!(!tree.contains("inside"));
+
+    let result = list(directory.path(), &["list", "--tree", "--all", "--json"]);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result.stderr);
+    let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert!(
+        value["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| { entry["name"] == "$RECYCLE.BIN\\inside" })
+    );
+
+    let result = list(directory.path(), &["list", "-r", "--all", "--json"]);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result.stderr);
+    let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    for name in excluded {
+        assert!(
+            value["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| { entry["name"] == format!("{name}\\inside") })
+        );
+    }
+    assert!(
+        value["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| { entry["name"] == "visible\\.VeNv\\deep" })
+    );
+
+    let result = list(directory.path(), &["list", "-a", "--json"]);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result.stderr);
+    let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(
+        value["entries"].as_array().unwrap().len(),
+        excluded.len() + 2
+    );
+}
+
+#[test]
+fn explicitly_listed_default_exclusion_is_read_but_its_children_remain_excluded() {
+    let directory = tempfile::tempdir().unwrap();
+    let git = directory.path().join(".git");
+    fs::create_dir_all(git.join("node_modules")).unwrap();
+    fs::write(git.join("descript.ion"), "\u{feff}config config note").unwrap();
+    fs::write(
+        git.join("node_modules/descript.ion"),
+        "\u{feff}inside nested note",
+    )
+    .unwrap();
+
+    let result = list(directory.path(), &["list", ".git", "-r", "--json"]);
+    assert_eq!(result.status.code(), Some(0), "{:?}", result.stderr);
+    let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(value["entries"][0]["name"], "config");
+    assert_eq!(value["entries"].as_array().unwrap().len(), 1);
+}
+
+#[test]
 fn automatic_and_disabled_color_keep_captured_output_plain_and_no_color_is_respected() {
     let directory = tempfile::tempdir().unwrap();
     fs::write(directory.path().join("descript.ion"), "\u{feff}name note").unwrap();

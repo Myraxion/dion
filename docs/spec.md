@@ -12,7 +12,7 @@
 
 ```text
 dion [--json|-j] get <path>
-dion [--json|-j] list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--color auto|always|never]
+dion [--json|-j] list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--all|-a] [--color auto|always|never]
 dion [--json|-j] set <path> <comment>
 dion [--json|-j] set <path> --stdin|-i
 dion [--json|-j] set <path> --comment-file|-f <file>
@@ -23,7 +23,7 @@ dion [--json|-j] <command> --help | -h
 ```
 
 - 命令别名：`view`、`cat` 对应 `get`；`ls` 对应 `list`；`rm`、`unset`、`del` 对应 `remove`。`set` 保留原名，无额外别名。别名与完整命令的操作、选项范围、输出及退出码一致。
-- 短选项与长选项等价：`--json/-j`、`--help/-h`、`--long/-l`、`--recursive/-r`、`--tree/-t`、`--stdin/-i`、`--comment-file/-f`、`--edit/-e`。`--color` 没有短选项。后文长选项的规则同样适用于对应短选项。
+- 短选项与长选项等价：`--json/-j`、`--help/-h`、`--long/-l`、`--recursive/-r`、`--tree/-t`、`--all/-a`、`--stdin/-i`、`--comment-file/-f`、`--edit/-e`。`--color` 没有短选项。后文长选项的规则同样适用于对应短选项。
 - 命令及选项区分大小写，只接受明确指定的写法，不识别任意前缀。选项须按独立参数输入，不支持短选项连写、选项与值紧连或等号传值；`-f` 的文件名放在下一个参数中。
 - 重复选项（包括长短同义组合）报 `invalid_argument`、退出码 2；正文来源互斥、列表模式互斥、命令范围和 `--` 分隔规则保持一致。
 
@@ -52,8 +52,8 @@ dion [--json|-j] <command> --help | -h
 - `list` 接受可选目录，省略时使用当前目录；默认只列出自身备注文件中的记录。`--recursive`（`-r`）开启递归，可与双栏、单栏及 JSON 组合，仅适用于 `list`。`--all`（`-a`）仅适用于 `list`，递归时包含默认排除的目录；未开启递归时接受该选项但不改变结果。查询实际目录条目以识别类型；目录符号链接和 Junction 自身也归入目录组。
 - 列表按目录组、文件组输出，各组采用 Windows 不区分大小写的 `StrCmpLogicalW` 自然升序（如 `file2` 在 `file10` 前），比较相等时按原名称的 UTF-16 序列比较。接受系统排序细节随 Windows 版本变化；不改变名称匹配和重复检测。
 - 孤立记录保留并归入文件组。非普通记录名称作为完整名称匹配实际条目，无法对应普通条目时作为孤立记录；不解释名称中的分隔符或点组件，不据此访问其他目录。
-- 默认递归在任意层级跳过目录名称与 `$RECYCLE.BIN`、`System Volume Information`、`.git`、`node_modules`、`.venv`、`__pycache__`、`.pytest_cache`、`.next`、`.svn`、`.mypy_cache`、`.ruff_cache`、`.tox`、`.nox` 或 `.parcel-cache` 按 Windows 不区分大小写名称比较相等的子目录。按完整目录名称匹配，不检查属性或路径；`--all`（`-a`）取消这项排除。主动跳过不生成错误，不影响退出码；父目录备注文件中对被排除目录自身的记录仍正常列出。显式指定被排除目录为起始目录时读取其内部，但递归子目录仍受此规则约束。
-- 普通递归每个目录先输出自身全部已排序记录，再按实际子目录名称自然升序逐个深度优先递归，不将结果重新按完整路径排序。没有备注文件的中间目录仍遍历子目录。主动排除目录也不参与遍历，因此不会为其后代创建树辅助目录节点。
+- 默认递归在任意层级按完整目录名称、使用 Windows 不区分大小写比较跳过 `$RECYCLE.BIN`、`System Volume Information`、`.git`、`node_modules`、`.venv`、`__pycache__`、`.pytest_cache`、`.next`、`.svn`、`.mypy_cache`、`.ruff_cache`、`.tox`、`.nox` 和 `.parcel-cache`；不检查路径或属性。`--all`（`-a`）取消排除。主动跳过不生成错误或改变退出码，父目录备注文件中对该目录自身的记录仍正常列出。显式指定名单中的目录作为起始目录时读取其内部，但递归子目录仍适用名单。被跳过的子树不生成树辅助目录节点。
+- 普通递归每个目录先输出自身全部已排序记录，再按实际子目录名称自然升序逐个深度优先递归，不将结果重新按完整路径排序。没有备注文件的中间目录仍遍历子目录。
 - `--tree` 仅适用于 `list`，自动开启递归，不显示起始目录根节点；与显式 `--recursive`（`-r`）组合不改变结果。`--tree` 与 `--long`（`-l`）互斥，即使带 `--json` 也返回参数错误。
 - `--color` 仅适用于 `list`，值为 `auto`、`always` 或 `never`，默认 `auto`。名称着色只作用于文本输出，不改变布局、顺序、名称宽度或备注内容。`auto` 仅在 stdout 为终端、Windows VT 模式启用成功且 `NO_COLOR` 未设置为非空值时着色；检测或启用失败回退纯文本。`always` 强制输出颜色序列，包括管道，并覆盖 `NO_COLOR`；`never` 不添加颜色序列。`--color` 可与 JSON 组合并继续校验参数，但 JSON 从不添加颜色。
 - 树仅显示备注记录及连接它们所需的辅助目录节点，无备注且没有相关后代的目录不显示。目录自身备注与展开节点合并，保留记录名称拼写，先显示自身完整正文，再紧跟子节点。每层兄弟节点按目录优先及上述自然排序展开，辅助节点也参与目录优先；层级来自实际遍历的目录，不拆分非普通记录名称。

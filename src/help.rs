@@ -6,7 +6,7 @@ pub const OVERVIEW: &str = r#"Dion — 文件与文件夹备注
 
 用法：
   dion get <path>
-  dion list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--color auto|always|never]
+  dion list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--all|-a] [--color auto|always|never]
   dion set <path> (<comment> | --stdin|-i | --comment-file|-f <file> | --edit|-e)
   dion remove <path>
   dion help [command]
@@ -33,7 +33,7 @@ Purpose: View, list, set, and remove comments in descript.ion.
 
 Usage:
   dion get <path>
-  dion list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--color auto|always|never]
+  dion list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--all|-a] [--color auto|always|never]
   dion set <path> (<comment> | --stdin|-i | --comment-file|-f <file> | --edit|-e)
   dion remove <path>
   dion help [command]
@@ -101,7 +101,7 @@ Exit code 3 means no comment was found. An existing empty comment succeeds.
 
 const LIST_EN: &str = r#"Purpose: List comments for entries inside a directory, including orphan records.
 
-Usage: dion list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--color auto|always|never] [--json|-j]
+Usage: dion list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--all|-a] [--color auto|always|never] [--json|-j]
 Alias: ls
 
 Arguments and defaults:
@@ -109,6 +109,7 @@ Arguments and defaults:
   --long, -l       Use one-column output
   --recursive, -r  Include subdirectories; names are relative to the starting directory
   --tree, -t       Show a tree and recurse automatically; conflicts with --long
+  --all, -a        Include default-excluded directories during recursive listing
   --color <mode>   Name color: auto (default), always, or never
   --json, -j       Output JSON; tree mode returns ordinary recursive JSON
   --help, -h       Show help
@@ -116,7 +117,7 @@ Arguments and defaults:
 By default, list the current directory only, in aligned columns with directories first and natural name sorting.
 auto enables color only in a supported terminal. A nonempty NO_COLOR disables default color; always overrides it.
 JSON output never includes color codes.
-Recursive listing does not follow directory symlinks or junctions, unless one is the starting directory.
+Recursive listing skips $RECYCLE.BIN, System Volume Information, .git, node_modules, .venv, __pycache__, .pytest_cache, .next, .svn, .mypy_cache, .ruff_cache, .tox, .nox, and .parcel-cache by name, case-insensitively. --all includes them. This does not change the directory symlink and junction boundary.
 Bad records and read errors are skipped by default; text output summarizes errors and JSON returns entries and errors.
 Skipped errors use exit code 1; an inaccessible starting directory fails immediately.
 "#;
@@ -173,7 +174,7 @@ const GET: &str = r#"用途：查看文件或文件夹条目自身的备注，�
 
 const LIST: &str = r#"用途：列出目录内部条目的备注，包括孤立记录。
 
-用法：dion list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--color auto|always|never] [--json|-j]
+用法：dion list [directory] [--long|-l|--tree|-t] [--recursive|-r] [--all|-a] [--color auto|always|never] [--json|-j]
 别名：ls
 
 参数与默认行为：
@@ -181,6 +182,7 @@ const LIST: &str = r#"用途：列出目录内部条目的备注，包括孤立�
   --long, -l       单栏展示
   --recursive, -r  递归查询子目录，名称相对于起始目录
   --tree, -t       树状展示，自动递归，与 --long 互斥
+  --all, -a        递归时包含默认排除目录
   --color <mode>   名称颜色：auto（默认）、always 或 never
   --json, -j       输出 JSON；树模式输出普通递归 JSON
   --help, -h       显示帮助
@@ -188,6 +190,7 @@ const LIST: &str = r#"用途：列出目录内部条目的备注，包括孤立�
 默认只查询当前层，双栏展示完整正文，目录优先、名称自然排序。
 auto 仅在支持颜色的终端启用；非空 NO_COLOR 可关闭默认颜色，always 可覆盖。
 JSON 输出始终不添加颜色。
+递归默认按名称（不区分大小写）跳过 $RECYCLE.BIN、System Volume Information、.git、node_modules、.venv、__pycache__、.pytest_cache、.next、.svn、.mypy_cache、.ruff_cache、.tox、.nox 和 .parcel-cache；--all 包含这些目录。主动跳过不报错；目录自身备注仍列出。
 递归不进入途中遇到的目录符号链接或 Junction；显式指定为起始目录时读取内部。
 默认跳过坏记录和读取错误，继续查询；文本底部汇总错误，JSON 返回 entries 和 errors。
 有跳过的错误时退出码为 1；起始目录无法访问时直接失败。
