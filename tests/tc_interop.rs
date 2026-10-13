@@ -63,7 +63,7 @@ fn tc_root_fixture_decodes_single_line_spaced_unicode_and_multiline() {
         serde_json::json!({
             "name": "父文件夹1",
             "comment": "111测试",
-            "extension": "none"
+            "program_extension": "none"
         })
     );
 
@@ -75,7 +75,7 @@ fn tc_root_fixture_decodes_single_line_spaced_unicode_and_multiline() {
         serde_json::json!({
             "name": "父文件夹1 - 副本",
             "comment": "222测试",
-            "extension": "none"
+            "program_extension": "none"
         })
     );
 
@@ -87,7 +87,7 @@ fn tc_root_fixture_decodes_single_line_spaced_unicode_and_multiline() {
         serde_json::json!({
             "name": "父文件夹2",
             "comment": "测试测试\n。",
-            "extension": "tc"
+            "program_extension": "tc"
         })
     );
 
@@ -98,9 +98,9 @@ fn tc_root_fixture_decodes_single_line_spaced_unicode_and_multiline() {
         json_out(&res),
         serde_json::json!({
             "entries": [
-                { "name": "父文件夹1", "comment": "111测试", "extension": "none" },
-                { "name": "父文件夹1 - 副本", "comment": "222测试", "extension": "none" },
-                { "name": "父文件夹2", "comment": "测试测试\n。", "extension": "tc" }
+                { "name": "父文件夹1", "comment": "111测试" },
+                { "name": "父文件夹1 - 副本", "comment": "222测试" },
+                { "name": "父文件夹2", "comment": "测试测试\n。" }
             ],
             "errors": []
         })
@@ -120,7 +120,7 @@ fn tc_subfolder_fixtures_decode_trailing_breaks_and_blank_lines() {
         serde_json::json!({
             "name": "config.json",
             "comment": "测试换行1\n\n",
-            "extension": "tc"
+            "program_extension": "tc"
         })
     );
 
@@ -136,7 +136,7 @@ fn tc_subfolder_fixtures_decode_trailing_breaks_and_blank_lines() {
         serde_json::json!({
             "name": "2.txt",
             "comment": "测试换行\n",
-            "extension": "tc"
+            "program_extension": "tc"
         })
     );
 
@@ -147,7 +147,7 @@ fn tc_subfolder_fixtures_decode_trailing_breaks_and_blank_lines() {
         serde_json::json!({
             "name": "1.txt",
             "comment": "测试换行\n\n。",
-            "extension": "tc"
+            "program_extension": "tc"
         })
     );
 }
@@ -168,7 +168,7 @@ fn tc_backslash_and_literal_escapes_dense_fixture() {
         serde_json::json!({
             "name": ".env",
             "comment": expected_body,
-            "extension": "tc"
+            "program_extension": "tc"
         })
     );
 }
@@ -182,7 +182,7 @@ fn tc_complex_characters_and_edge_fixtures() {
     assert_eq!(res.status.code(), Some(0));
     let parsed = json_out(&res);
     assert_eq!(parsed["name"], "top");
-    assert_eq!(parsed["extension"], "tc");
+    assert_eq!(parsed["program_extension"], "tc");
     let comment = parsed["comment"].as_str().unwrap();
     assert!(comment.contains("测试特殊字符："));
     assert!(comment.contains("k\\jq"));
@@ -409,7 +409,7 @@ fn policy_accepts_records_without_trailing_newline_and_literal_unknown_escapes()
         serde_json::json!({
             "name": "target.txt",
             "comment": "特殊\\x\\y",
-            "extension": "tc"
+            "program_extension": "tc"
         })
     );
 

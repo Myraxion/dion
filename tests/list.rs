@@ -390,10 +390,10 @@ fn tree_json_is_the_ordinary_recursive_list_without_supporting_nodes() {
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&recursive.stdout).unwrap(),
         serde_json::json!({"entries": [
-            {"name":"CHILD", "comment":"own", "extension":"none"},
-            {"name":"z", "comment":"parent", "extension":"none"},
-            {"name":"child\\middle\\deep\\empty", "comment":"", "extension":"none"},
-            {"name":"child\\middle\\deep\\other", "comment":"unknown\\n", "extension":"unknown"},
+            {"name":"CHILD", "comment":"own"},
+            {"name":"z", "comment":"parent"},
+            {"name":"child\\middle\\deep\\empty", "comment":""},
+            {"name":"child\\middle\\deep\\other", "comment":"unknown\\n"},
         ], "errors": []})
     );
     for options in [vec!["--tree"], vec!["--tree", "-r"]] {
@@ -499,12 +499,12 @@ fn recursive_list_emits_parent_records_then_naturally_ordered_subtrees_in_all_mo
         fs::write(directory.path().join(path), bytes).unwrap();
     }
     let expected = serde_json::json!({"entries": [
-        {"name":"DIR2", "comment":"directory", "extension":"none"},
-        {"name":"empty", "comment":"", "extension":"none"},
-        {"name":"z", "comment":"parent", "extension":"none"},
-        {"name":"dir2\\orphan", "comment":"first\nsecond", "extension":"tc"},
-        {"name":"dir2\\middle\\deep\\lost", "comment":"literal\\n", "extension":"unknown"},
-        {"name":"dir10\\file", "comment":"last", "extension":"none"},
+        {"name":"DIR2", "comment":"directory"},
+        {"name":"empty", "comment":""},
+        {"name":"z", "comment":"parent"},
+        {"name":"dir2\\orphan", "comment":"first\nsecond"},
+        {"name":"dir2\\middle\\deep\\lost", "comment":"literal\\n"},
+        {"name":"dir10\\file", "comment":"last"},
     ], "errors": []});
     for option in ["--recursive", "-r"] {
         for long in [false, true] {
@@ -916,10 +916,10 @@ fn default_directory_lists_all_records_in_natural_order_with_decoded_bodies() {
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap(),
         serde_json::json!({"entries": [
-            {"name": "empty", "comment": "", "extension": "none"},
-            {"name": "orphan", "comment": "normal\\n", "extension": "unknown"},
-            {"name": "zeta", "comment": "literal\\n", "extension": "none"},
-            {"name": "照片 😀.txt", "comment": "first\n  second\n", "extension": "tc"}
+            {"name": "empty", "comment": ""},
+            {"name": "orphan", "comment": "normal\\n"},
+            {"name": "zeta", "comment": "literal\\n"},
+            {"name": "照片 😀.txt", "comment": "first\n  second\n"}
         ], "errors": []})
     );
     assert_eq!(
@@ -983,7 +983,7 @@ fn description_discovery_preserves_case_variants_and_descendants_of_empty_direct
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&direct.stdout).unwrap(),
         serde_json::json!({"entries": [
-            {"name": "root", "comment": "root note", "extension": "none"}
+            {"name": "root", "comment": "root note"}
         ], "errors": []})
     );
 
@@ -994,8 +994,8 @@ fn description_discovery_preserves_case_variants_and_descendants_of_empty_direct
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap(),
             serde_json::json!({"entries": [
-                {"name": "root", "comment": "root note", "extension": "none"},
-                {"name": "middle\\deep\\child", "comment": "child note", "extension": "none"}
+                {"name": "root", "comment": "root note"},
+                {"name": "middle\\deep\\child", "comment": "child note"}
             ], "errors": []})
         );
     }
@@ -1056,9 +1056,9 @@ fn bad_records_are_skipped_without_losing_records_before_or_after_them() {
                 assert_eq!(
                     value["entries"],
                     serde_json::json!([
-                        {"name":"first", "comment":"ok", "extension":"none"},
-                        {"name":"second", "comment":"multiline\nbody", "extension":"tc"},
-                        {"name":"third", "comment":"later", "extension":"none"},
+                        {"name":"first", "comment":"ok"},
+                        {"name":"second", "comment":"multiline\nbody"},
+                        {"name":"third", "comment":"later"},
                     ])
                 );
                 assert_eq!(value["errors"].as_array().unwrap().len(), 1);
@@ -1126,8 +1126,8 @@ fn multiple_bad_lines_are_reported_in_physical_order_after_the_list() {
             assert_eq!(
                 value["entries"],
                 serde_json::json!([
-                    {"name":"after", "comment":"readable", "extension":"none"},
-                    {"name":"first", "comment":"kept", "extension":"none"},
+                    {"name":"after", "comment":"readable"},
+                    {"name":"first", "comment":"kept"},
                 ])
             );
             let errors = value["errors"].as_array().unwrap();
@@ -1189,9 +1189,9 @@ fn skipped_description_files_do_not_hide_descendants_and_errors_follow_traversal
     assert_eq!(
         value["entries"],
         serde_json::json!([
-            {"name":"parent", "comment":"kept", "extension":"none"},
-            {"name":"dir2\\deep\\child", "comment":"kept", "extension":"none"},
-            {"name":"dir10\\deep\\after", "comment":"kept", "extension":"none"},
+            {"name":"parent", "comment":"kept"},
+            {"name":"dir2\\deep\\child", "comment":"kept"},
+            {"name":"dir10\\deep\\after", "comment":"kept"},
         ])
     );
     let errors = value["errors"].as_array().unwrap();

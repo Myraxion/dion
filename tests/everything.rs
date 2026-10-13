@@ -174,7 +174,7 @@ fn explicit_instance_queries_only_indexed_candidates_with_a_path_scoped_filename
     success(&output);
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
-        serde_json::json!({"entries":[{"name":"root","comment":"indexed","extension":"none"}],"errors":[]})
+        serde_json::json!({"entries":[{"name":"root","comment":"indexed"}],"errors":[]})
     );
     let query = fs::read_to_string(peer.dir.path().join("query.txt")).unwrap();
     assert_eq!(
@@ -252,7 +252,7 @@ fn failed_ancestor_metadata_skips_its_subtree_and_preserves_other_indexed_record
     assert_eq!(
         value["entries"],
         serde_json::json!([
-            {"name":"later\\after","comment":"kept","extension":"none"},
+            {"name":"later\\after","comment":"kept"},
         ])
     );
     assert_eq!(value["errors"].as_array().unwrap().len(), 1);
@@ -385,7 +385,7 @@ fn stale_missing_directory_candidates_are_skipped_without_hiding_valid_records()
     success(&output);
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
-        serde_json::json!({"entries":[{"name":"root","comment":"kept","extension":"none"}],"errors":[]})
+        serde_json::json!({"entries":[{"name":"root","comment":"kept"}],"errors":[]})
     );
 }
 
@@ -432,8 +432,8 @@ fn indexed_junctions_are_skipped_but_an_explicit_junction_root_is_read() {
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&explicit.stdout).unwrap(),
         serde_json::json!({"entries":[
-            {"name":"inside","comment":"root","extension":"none"},
-            {"name":"deep\\child","comment":"nested","extension":"none"},
+            {"name":"inside","comment":"root"},
+            {"name":"deep\\child","comment":"nested"},
         ],"errors":[]})
     );
 }

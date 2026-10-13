@@ -115,8 +115,8 @@ dion [--json|-j] <command> --help | -h
 - 成功结果写 stdout；终止错误写 stderr，JSON 模式终止错误也是 JSON，stdout 为空，包括未找到记录。`list` 已跳过的错误与正常列表共同写 stdout，不重复写 stderr；输出写入失败是终止错误，可能已输出部分字节。
 - `list` 三种文本模式在正常列表之后追加错误区，简体中文标题为 `错误（N）：`，英文标题为 `Errors (N):`，每条错误独占一行，包含代码、原因、路径及适用的物理行号。有正常列表时在错误区之前添加一个空行；没有错误时不追加任何内容。
 - JSON 使用 UTF-8、无 BOM，输出文档以 LF 结束；正文值本身不附加额外换行。
-- JSON `get` 结果含 `name`、`comment`、`extension`；名称保留记录原拼写，扩展状态为 `none`、`tc`、`unknown`。
-- JSON `list` 结果是含 `entries` 和 `errors` 数组的对象。每条备注记录使用相同字段，名称不添加目录标记；查询范围内无有效记录时 `entries` 为空。每条错误使用既有 `code`、`message` 及适用的 `file`、`line` 字段，无错误时 `errors:[]`。双栏、单栏和 JSON 使用相同直接或普通递归记录顺序；文本排版选项不改变 JSON 内容。递归不增加辅助目录节点；双栏宽度按本次全部相对名称及目录标记计算。
+- JSON `get` 结果含 `name`、`comment`、`program_extension`；名称保留记录原拼写，程序扩展类型为 `none`、`tc`、`unknown`，不表示文件扩展名。旧字段 `extension` 不再输出。
+- JSON `list` 结果是含 `entries` 和 `errors` 数组的对象。每条备注记录只含 `name`、`comment`，名称不添加目录标记；正文沿用解析规则，未知程序扩展记录仍正常列出，不提供程序扩展类型或编辑能力字段。查询范围内无有效记录时 `entries` 为空。每条错误使用既有 `code`、`message` 及适用的 `file`、`line` 字段，无错误时 `errors:[]`。双栏、单栏和 JSON 使用相同直接或普通递归记录顺序；文本排版选项不改变 JSON 内容。递归不增加辅助目录节点；双栏宽度按本次全部相对名称及目录标记计算。字段取舍见 [ADR-0005](adr/0005-json-program-extension.md)。
 - 树 JSON 与同一起始目录的普通递归 JSON 完全相同，沿用普通递归顺序及字段，不包含辅助目录节点或文本目录标记。树模式复用普通递归的链接边界、显式链接起始目录及错误跳过规则。
 - JSON `set` 与 `remove` 结果含布尔字段 `changed`，表示是否实际发生修改。
 - JSON 错误包含 `error` 对象，内部有稳定的 `code` 和供人阅读的 `message`，适用时附带 `file`、`line`。错误代码为 `invalid_encoding`、`invalid_format`、`unknown_extension`、`content_changed`、`io_error`、`everything_error`（退出码 1）、`invalid_argument`（退出码 2）、`not_found`（退出码 3）。
@@ -128,8 +128,8 @@ JSON 结果示例：
 
 | 操作 | 结果 |
 | --- | --- |
-| `get` | `{"name":"a.txt","comment":"备注正文","extension":"none"}` |
-| `list` | `{"entries":[{"name":"a.txt","comment":"备注正文","extension":"none"}],"errors":[]}` |
+| `get` | `{"name":"a.txt","comment":"备注正文","program_extension":"none"}` |
+| `list` | `{"entries":[{"name":"a.txt","comment":"备注正文"}],"errors":[]}` |
 | `list` 跳过坏行 | `{"entries":[],"errors":[{"code":"invalid_format","message":"引号未闭合","file":"D:\\data\\descript.ion","line":3}]}` |
 | `set/remove` | `{"changed":true}` |
 | 格式错误 | `{"error":{"code":"invalid_format","message":"引号未闭合","file":"D:\\data\\descript.ion","line":3}}` |

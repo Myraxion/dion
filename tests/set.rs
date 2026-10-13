@@ -393,7 +393,7 @@ fn multiline_argument_normalizes_breaks_and_roundtrips_tc_encoding() {
     assert!(result.stderr.is_empty());
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap(),
-        serde_json::json!({"name":"照片 😀.txt", "comment":"  中文\\n\\path\n\tsecond\n\nthird\n\n", "extension":"tc"})
+        serde_json::json!({"name":"照片 😀.txt", "comment":"  中文\\n\\path\n\tsecond\n\nthird\n\n", "program_extension":"tc"})
     );
 }
 

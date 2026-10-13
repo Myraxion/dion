@@ -180,7 +180,7 @@ fn all_commands_support_long_unicode_paths_and_orphan_records() {
         let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"name":"照片 😀.txt", "comment":"中文", "extension":"none"})
+            serde_json::json!({"name":"照片 😀.txt", "comment":"中文", "program_extension":"none"})
         );
         let result = run(directory.path(), &["--json", "set", &entry_path, "中文"]);
         success(&result);
@@ -392,8 +392,8 @@ fn check_link_entry(directory: &Path, link: &Path, target_parent: &Path, is_dir:
                 assert_eq!(
                     serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap(),
                     serde_json::json!({"entries":[
-                        {"name":"child", "comment":"inside", "extension":"none"},
-                        {"name":"nested\\deep", "comment":"nested", "extension":"none"},
+                        {"name":"child", "comment":"inside"},
+                        {"name":"nested\\deep", "comment":"nested"},
                     ], "errors": []})
                 );
             } else {

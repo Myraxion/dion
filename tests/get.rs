@@ -60,7 +60,7 @@ fn json_preserves_record_spelling_and_uses_utf8_without_bom_and_final_lf() {
     assert!(result.stdout.ends_with(b"\n"));
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap(),
-        serde_json::json!({"name": "Résumé.txt", "comment": "中文\t\"引用\" ", "extension": "none"})
+        serde_json::json!({"name": "Résumé.txt", "comment": "中文\t\"引用\" ", "program_extension": "none"})
     );
 }
 
@@ -355,7 +355,7 @@ fn reads_tc_multiline_comments_in_text_and_json() {
     assert!(result.stderr.is_empty());
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap(),
-        serde_json::json!({"name": "target", "comment": "first\nsecond", "extension": "tc"})
+        serde_json::json!({"name": "target", "comment": "first\nsecond", "program_extension": "tc"})
     );
 }
 
@@ -384,7 +384,7 @@ fn tc_decoding_preserves_unicode_whitespace_blank_lines_and_literal_backslashes(
         assert!(result.stderr.is_empty());
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap(),
-            serde_json::json!({"name": "target", "comment": expected, "extension": "tc"})
+            serde_json::json!({"name": "target", "comment": expected, "program_extension": "tc"})
         );
         assert_eq!(
             fs::read(directory.path().join("descript.ion")).unwrap(),
@@ -414,7 +414,7 @@ fn only_the_exact_tc_extension_enables_escape_decoding() {
         assert!(result.stderr.is_empty());
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap(),
-            serde_json::json!({"name": "target", "comment": body, "extension": extension})
+            serde_json::json!({"name": "target", "comment": body, "program_extension": extension})
         );
         assert_eq!(
             fs::read(directory.path().join("descript.ion")).unwrap(),
@@ -437,7 +437,7 @@ fn mixed_extensions_still_require_whole_file_validation() {
         assert!(result.stderr.is_empty());
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap(),
-            serde_json::json!({"name": name, "comment": comment, "extension": extension})
+            serde_json::json!({"name": name, "comment": comment, "program_extension": extension})
         );
     }
     for (bad_record, code) in [

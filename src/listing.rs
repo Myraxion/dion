@@ -1,6 +1,5 @@
 use crate::{
     comment,
-    comment::Extension,
     error::{Diagnostic, Error, LocalizedError},
     everything,
     i18n::Language,
@@ -128,7 +127,6 @@ fn write_errors(
 struct Entry {
     name: String,
     comment: String,
-    extension: Extension,
     #[serde(skip)]
     directory: bool,
     #[serde(skip)]
@@ -623,7 +621,6 @@ fn read_description(
                         name_utf16: record.name.encode_utf16().chain(Some(0)).collect(),
                         name: record.name.to_owned(),
                         comment: record.comment.into_owned(),
-                        extension: record.extension,
                     })
                     .collect()
             }
