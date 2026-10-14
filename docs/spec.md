@@ -60,7 +60,7 @@ dion [--json|-j] <command> --help | -h
 - `--color` 仅适用于 `list`，值为 `auto`、`always` 或 `never`，默认 `auto`。名称着色只作用于文本输出，不改变布局、顺序、名称宽度或备注内容。`auto` 仅在 stdout 为终端、Windows VT 模式启用成功且 `NO_COLOR` 未设置为非空值时着色；检测或启用失败回退纯文本。`always` 强制输出颜色序列，包括管道，并覆盖 `NO_COLOR`；`never` 不添加颜色序列。`--color` 可与 JSON 组合并继续校验参数，但 JSON 从不添加颜色。
 - 树仅显示备注记录及连接它们所需的辅助目录节点，无备注且没有相关后代的目录不显示。目录自身备注与展开节点合并，保留记录名称拼写，先显示自身完整正文，再紧跟子节点。每层兄弟节点按目录优先及上述自然排序展开，辅助节点也参与目录优先；层级来自实际遍历的目录，不拆分非普通记录名称。
 - 递归途中不进入目录符号链接或 Junction，其自身备注仍可列出并标识为目录；显式起始目录为链接或 Junction 时读取内部。其他目录重解析点不额外排除。
-- 递归名称使用相对于起始目录的路径和 Windows 分隔符，起始目录内名称不加点前缀，记录名称保留既有拼写。非普通名称作为文本追加在所属目录前缀之后，不拆分、规范化或构造层级。
+- 递归文本名称使用相对于起始目录的路径和 Windows 分隔符，起始目录内名称不加点前缀，记录名称保留既有拼写。非普通名称作为文本追加在所属目录前缀之后，不拆分、规范化或构造层级。扁平 JSON 将记录所属目录与原始记录名称分别输出，树 JSON 通过直接子节点表达层级。
 - `list` 默认跳过错误并继续查询：坏 UTF-8、格式错误、超长记录只跳过对应物理行；大小写重复名称保留首条有效记录，后续重复行报错。缺少 BOM（包括零字节文件）跳过整个备注文件，不猜测或转换编码。
 - 备注文件无法读取时汇总错误，递归仍访问该目录的子目录。目录枚举、目录项读取或类型查询失败时，跳过该目录的全部内容并继续其他目录；无法表示为 UTF-8 的待递归目录名称同样使所属目录跳过。起始目录不存在、不是目录或无法完成枚举时直接失败，stdout 为空。
 - 跳过的错误按目录遍历顺序汇总，同一备注文件内按物理行顺序排列，保留适用的文件、物理行号和原因。错误不改变正常记录的排序、链接边界及树辅助节点规则。
@@ -96,7 +96,7 @@ dion [--json|-j] <command> --help | -h
 - 多行正文写为一条物理记录：逻辑 LF 编码为字面量反斜杠加 n，反斜杠加倍，并附加 TC UTF-8 扩展标记 04 C3 82。单行正文直接写入，不添加扩展。
 - 只有带 TC 标记的记录才解释换行和反斜杠转义；其他反斜杠组合及末尾反斜杠按字面保留。
 - 未知程序扩展读取 04 前的普通正文，不解释转义；设置该记录返回 `unknown_extension`；显式删除可以移除整条记录。未知扩展本身不属于坏行。
-- 名称匹配、重复检测、列表目录识别及树节点合并统一使用 Windows `CompareStringOrdinal(..., TRUE)`，按系统大写表固定不区分大小写，不依赖目录的大小写设置或用户语言设置，不进行 Unicode 规范化。按该比较器相等的重复记录视为冲突，不能分别操作；名称保留原拼写，列表自然排序另按上述展示规则执行。接受不同于 Rust Unicode 小写转换的名称相等关系，不承诺完全复现所有文件系统或 Total Commander 的匹配规则。见 [ADR-0002](adr/0002-case-insensitive-record-names.md) 和[名称比较设计](archive/windows-name-comparison-design.md)。
+- 名称匹配、重复检测、列表条目类型识别及树节点合并统一使用 Windows `CompareStringOrdinal(..., TRUE)`，按系统大写表固定不区分大小写，不依赖目录的大小写设置或用户语言设置，不进行 Unicode 规范化。按该比较器相等的重复记录视为冲突，不能分别操作；名称保留原拼写，列表自然排序另按上述展示规则执行。接受不同于 Rust Unicode 小写转换的名称相等关系，不承诺完全复现所有文件系统或 Total Commander 的匹配规则。见 [ADR-0002](adr/0002-case-insensitive-record-names.md) 和[名称比较设计](archive/windows-name-comparison-design.md)。
 - 单条记录最多 4096 个 UTF-8 字节，包含名称、引号、分隔空格、正文、扩展及行终止符。超限报错，不截断。
 - `get`、`set`、`remove` 遇已识别的编码或格式错误导致整次操作失败：不输出正常结果，不修改文件。`list` 跳过坏记录并汇总错误。诊断包含适用的文件、物理行号及原因；物理行号包括文件头空行。
 - 仅修改目标记录，其余内容按原字节保留。修改保持原位置和名称拼写、新增追加末尾。列表排序只改变输出，不修改备注文件字节、记录顺序、时间或属性。见 [ADR-0001](adr/0001-preserve-unmodified-bytes.md)。
@@ -116,8 +116,9 @@ dion [--json|-j] <command> --help | -h
 - `list` 三种文本模式在正常列表之后追加错误区，简体中文标题为 `错误（N）：`，英文标题为 `Errors (N):`，每条错误独占一行，包含代码、原因、路径及适用的物理行号。有正常列表时在错误区之前添加一个空行；没有错误时不追加任何内容。
 - JSON 使用 UTF-8、无 BOM，输出文档以 LF 结束；正文值本身不附加额外换行。
 - JSON `get` 结果含 `name`、`comment`、`program_extension`；名称保留记录原拼写，程序扩展类型为 `none`、`tc`、`unknown`，不表示文件扩展名。旧字段 `extension` 不再输出。
-- JSON `list` 结果是含 `entries` 和 `errors` 数组的对象。每条备注记录只含 `name`、`comment`，名称不添加目录标记；正文沿用解析规则，未知程序扩展记录仍正常列出，不提供程序扩展类型或编辑能力字段。查询范围内无有效记录时 `entries` 为空。每条错误使用既有 `code`、`message` 及适用的 `file`、`line` 字段，无错误时 `errors:[]`。双栏、单栏和 JSON 使用相同直接或普通递归记录顺序；文本排版选项不改变 JSON 内容。递归不增加辅助目录节点；双栏宽度按本次全部相对名称及目录标记计算。字段取舍见 [ADR-0005](adr/0005-json-program-extension.md)。
-- 树 JSON 与同一起始目录的普通递归 JSON 完全相同，沿用普通递归顺序及字段，不包含辅助目录节点或文本目录标记。树模式复用普通递归的链接边界、显式链接起始目录及错误跳过规则。
+- JSON `list` 结果是含 `root_directory`、`entries`、`errors` 的对象。`root_directory` 是查询起始目录的绝对路径，按现有路径规则词法处理点组件，不解析符号链接或 Junction 的目标，保留路径拼写和 Windows 扩展路径前缀；普通、递归、树状及 Everything 查询均提供此字段，空列表和含跳过错误的结果也包含它。所有条目含 `type`，值为 `file`、`directory`、`orphan`，分别表示匹配实际文件、目录及未匹配当前目录实际条目的孤立记录；匹配保留既有 Windows 不区分大小写名称规则，目录符号链接和 Junction 自身属于 `directory`。类型在既有目录枚举中匹配完整记录名称，不解释其中的分隔符或点组件。正文沿用解析规则，未知程序扩展记录仍正常列出；两种列表均不提供 `extension`、`program_extension` 或编辑能力字段。查询范围内无有效记录时 `entries` 为空。每条错误使用既有 `code`、`message` 及适用的 `file`、`line` 字段，无错误时 `errors:[]`。字段取舍见 [ADR-0005](adr/0005-json-program-extension.md) 和 [ADR-0006](adr/0006-json-list-ownership-and-tree.md)。
+- 普通及递归扁平 JSON 条目只含 `type`、`parent_directory`、`name`、`comment`。`parent_directory` 是记录所属目录相对于查询起始目录的路径，使用实际遍历目录的拼写和 Windows 反斜杠，无尾部分隔符，起始目录为 `""`；目录自身的备注记录属于其上级目录。`name` 仅含备注文件中的原始记录名称，保留原拼写，不拼接所属目录，不添加目录标记。双栏、单栏和扁平 JSON 使用相同直接或普通递归记录顺序，`--long` 不改变 JSON 内容；递归不增加辅助目录节点，孤立记录继续与文件混合排序。双栏宽度按本次全部相对名称及目录标记计算。
+- `--tree --json` 输出嵌套树，节点含 `type`、`name`、`comment`，不含 `parent_directory`。目录节点始终包含 `children` 数组，表示直接子节点，无子节点时为 `[]`；文件和孤立记录不含 `children`。复用文本树的节点选择、每层排序和目录备注合并规则，不显示起始目录根节点，层级只来自实际目录遍历，不拆分记录名称。带备注的节点名称保留记录原拼写，辅助目录名称使用实际目录名，`comment: null` 表示辅助目录没有备注记录，已有空备注使用 `comment: ""`。树模式复用普通递归的过滤、链接边界、显式链接起始目录及错误跳过规则；两种 JSON 契约同样适用于 Everything 查询。
 - JSON `set` 与 `remove` 结果含布尔字段 `changed`，表示是否实际发生修改。
 - JSON 错误包含 `error` 对象，内部有稳定的 `code` 和供人阅读的 `message`，适用时附带 `file`、`line`。错误代码为 `invalid_encoding`、`invalid_format`、`unknown_extension`、`content_changed`、`io_error`、`everything_error`（退出码 1）、`invalid_argument`（退出码 2）、`not_found`（退出码 3）。
 - 退出码 0 表示成功，1 表示格式、编码、权限及其他 I/O 操作错误（包括 `list` 已输出部分或空列表并汇总了跳过的错误），2 表示参数错误，3 表示 `get` 未找到记录。
@@ -129,8 +130,10 @@ JSON 结果示例：
 | 操作 | 结果 |
 | --- | --- |
 | `get` | `{"name":"a.txt","comment":"备注正文","program_extension":"none"}` |
-| `list` | `{"entries":[{"name":"a.txt","comment":"备注正文"}],"errors":[]}` |
-| `list` 跳过坏行 | `{"entries":[],"errors":[{"code":"invalid_format","message":"引号未闭合","file":"D:\\data\\descript.ion","line":3}]}` |
+| `list` | `{"root_directory":"D:\\data","entries":[{"type":"file","parent_directory":"","name":"a.txt","comment":"备注正文"}],"errors":[]}` |
+| `list -r` | `{"root_directory":"D:\\data","entries":[{"type":"file","parent_directory":"folder","name":"a.txt","comment":"备注正文"}],"errors":[]}` |
+| `list --tree` | `{"root_directory":"D:\\data","entries":[{"type":"directory","name":"folder","comment":null,"children":[{"type":"file","name":"a.txt","comment":"备注正文"}]}],"errors":[]}` |
+| `list` 跳过坏行 | `{"root_directory":"D:\\data","entries":[],"errors":[{"code":"invalid_format","message":"引号未闭合","file":"D:\\data\\descript.ion","line":3}]}` |
 | `set/remove` | `{"changed":true}` |
 | 格式错误 | `{"error":{"code":"invalid_format","message":"引号未闭合","file":"D:\\data\\descript.ion","line":3}}` |
 

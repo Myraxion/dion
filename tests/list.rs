@@ -25,6 +25,73 @@ fn list_with_no_color(directory: &Path, args: &[&str], value: &str) -> Output {
 }
 
 #[test]
+fn json_root_directory_is_absolute_for_current_relative_and_absolute_queries() {
+    let directory = tempfile::tempdir().unwrap();
+    let child = directory.path().join("资料 😀");
+    fs::create_dir(&child).unwrap();
+    fs::write(directory.path().join("descript.ion"), "\u{feff}root note").unwrap();
+    fs::write(child.join("descript.ion"), b"missing BOM").unwrap();
+    for options in [vec![], vec!["-l"], vec!["-r"], vec!["--tree"]] {
+        for (cwd, query, expected) in [
+            (directory.path(), None, directory.path()),
+            (directory.path(), Some("."), directory.path()),
+            (directory.path(), Some("资料 😀"), child.as_path()),
+            (
+                directory.path(),
+                Some("./资料 😀/../资料 😀/."),
+                child.as_path(),
+            ),
+            (directory.path(), child.to_str(), child.as_path()),
+            (child.as_path(), None, child.as_path()),
+        ] {
+            let mut args = vec!["list", "--json"];
+            if let Some(query) = query {
+                args.push(query);
+            }
+            args.extend(options.iter().copied());
+            let output = list(cwd, &args);
+            assert!(output.stderr.is_empty(), "{args:?}: {:?}", output.stderr);
+            let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(
+                value["root_directory"],
+                expected.to_str().unwrap(),
+                "{args:?}"
+            );
+            if expected == child {
+                assert_eq!(output.status.code(), Some(1));
+                assert_eq!(value["entries"], serde_json::json!([]));
+                assert_eq!(value["errors"][0]["code"], "invalid_encoding");
+            } else {
+                assert_eq!(
+                    output.status.code(),
+                    Some(i32::from(
+                        options.contains(&"-r") || options.contains(&"--tree")
+                    ))
+                );
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn json_root_directory_preserves_extended_paths() {
+    let directory = tempfile::tempdir().unwrap();
+    let extended = fs::canonicalize(directory.path()).unwrap();
+    for options in [vec![], vec!["--tree"]] {
+        let mut args = vec!["list", extended.to_str().unwrap(), "--json"];
+        args.extend(options);
+        let output = list(directory.path(), &args);
+        assert_eq!(output.status.code(), Some(0));
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({"root_directory":extended, "entries":[], "errors":[]})
+        );
+    }
+}
+
+#[test]
 fn color_always_styles_names_in_every_text_layout_but_not_json() {
     let directory = tempfile::tempdir().unwrap();
     fs::create_dir(directory.path().join("folder")).unwrap();
@@ -124,8 +191,8 @@ fn recursive_list_skips_default_directories_and_all_restores_them() {
     assert!(names.contains(&".git"));
     assert!(names.contains(&"visible"));
     assert!(names.contains(&".git-backup"));
-    assert!(!names.contains(&"visible\\.VeNv\\deep"));
-    assert!(!names.iter().any(|name| name.contains("\\inside")));
+    assert!(!names.contains(&"deep"));
+    assert!(!names.contains(&"inside"));
     assert_eq!(value["errors"], serde_json::json!([]));
 
     let result = list(directory.path(), &["list", "--tree"]);
@@ -137,13 +204,9 @@ fn recursive_list_skips_default_directories_and_all_restores_them() {
     let result = list(directory.path(), &["list", "--tree", "--all", "--json"]);
     assert_eq!(result.status.code(), Some(0), "{:?}", result.stderr);
     let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
-    assert!(
-        value["entries"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|entry| { entry["name"] == "$RECYCLE.BIN\\inside" })
-    );
+    assert!(value["entries"].as_array().unwrap().iter().any(|entry| {
+        entry["name"] == "$RECYCLE.BIN" && entry["children"][0]["name"] == "inside"
+    }));
 
     let result = list(directory.path(), &["list", "-r", "--all", "--json"]);
     assert_eq!(result.status.code(), Some(0), "{:?}", result.stderr);
@@ -154,15 +217,13 @@ fn recursive_list_skips_default_directories_and_all_restores_them() {
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|entry| { entry["name"] == format!("{name}\\inside") })
+                .any(|entry| { entry["parent_directory"] == name && entry["name"] == "inside" })
         );
     }
     assert!(
-        value["entries"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|entry| { entry["name"] == "visible\\.VeNv\\deep" })
+        value["entries"].as_array().unwrap().iter().any(|entry| {
+            entry["parent_directory"] == "visible\\.VeNv" && entry["name"] == "deep"
+        })
     );
 
     let result = list(directory.path(), &["list", "-a", "--json"]);
@@ -372,7 +433,7 @@ fn tree_merges_directory_comments_and_prunes_unrelated_nodes_in_natural_order() 
 }
 
 #[test]
-fn tree_json_is_the_ordinary_recursive_list_without_supporting_nodes() {
+fn tree_json_nests_records_and_supporting_directories_from_actual_traversal() {
     let directory = tempfile::tempdir().unwrap();
     fs::create_dir_all(directory.path().join("child/middle/deep")).unwrap();
     fs::write(
@@ -389,11 +450,11 @@ fn tree_json_is_the_ordinary_recursive_list_without_supporting_nodes() {
     assert_eq!(recursive.status.code(), Some(0));
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&recursive.stdout).unwrap(),
-        serde_json::json!({"entries": [
-            {"name":"CHILD", "comment":"own"},
-            {"name":"z", "comment":"parent"},
-            {"name":"child\\middle\\deep\\empty", "comment":""},
-            {"name":"child\\middle\\deep\\other", "comment":"unknown\\n"},
+        serde_json::json!({"root_directory": directory.path(), "entries": [
+            {"type":"directory", "parent_directory":"", "name":"CHILD", "comment":"own"},
+            {"type":"orphan", "parent_directory":"", "name":"z", "comment":"parent"},
+            {"type":"orphan", "parent_directory":"child\\middle\\deep", "name":"empty", "comment":""},
+            {"type":"orphan", "parent_directory":"child\\middle\\deep", "name":"other", "comment":"unknown\\n"},
         ], "errors": []})
     );
     for options in [vec!["--tree"], vec!["--tree", "-r"]] {
@@ -402,8 +463,79 @@ fn tree_json_is_the_ordinary_recursive_list_without_supporting_nodes() {
         let result = list(directory.path(), &args);
         assert_eq!(result.status.code(), Some(0));
         assert!(result.stderr.is_empty());
-        assert_eq!(result.stdout, recursive.stdout);
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap(),
+            serde_json::json!({"root_directory": directory.path(), "entries": [
+                {"type":"directory", "name":"CHILD", "comment":"own", "children":[
+                    {"type":"directory", "name":"middle", "comment":null, "children":[
+                        {"type":"directory", "name":"deep", "comment":null, "children":[
+                            {"type":"orphan", "name":"empty", "comment":""},
+                            {"type":"orphan", "name":"other", "comment":"unknown\\n"}
+                        ]}
+                    ]}
+                ]},
+                {"type":"orphan", "name":"z", "comment":"parent"}
+            ], "errors":[]})
+        );
     }
+}
+
+#[test]
+fn json_preserves_record_names_and_distinguishes_empty_comments_from_supporting_nodes() {
+    let directory = tempfile::tempdir().unwrap();
+    for path in ["folder2/资料 😀", "folder10", "unrelated/nested"] {
+        fs::create_dir_all(directory.path().join(path)).unwrap();
+    }
+    fs::write(directory.path().join("item10"), b"").unwrap();
+    fs::write(directory.path().join("folder2/资料 😀/File2"), b"").unwrap();
+    fs::write(
+        directory.path().join("descript.ion"),
+        "\u{feff}FOLDER2 \nfolder10 leaf\nitem10 body\n\"folder2\\fake\" legacy",
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("folder2/descript.ion"),
+        "\u{feff}\"资料 😀\\fake\" nested legacy",
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("folder2/资料 😀/descript.ion"),
+        "\u{feff}FILE2 ",
+    )
+    .unwrap();
+
+    let flat = list(directory.path(), &["list", "-r", "--json"]);
+    assert_eq!(flat.status.code(), Some(0));
+    assert!(flat.stderr.is_empty());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&flat.stdout).unwrap(),
+        serde_json::json!({"root_directory": directory.path(), "entries":[
+        {"type":"directory", "parent_directory":"", "name":"FOLDER2", "comment":""},
+        {"type":"directory", "parent_directory":"", "name":"folder10", "comment":"leaf"},
+        {"type":"orphan", "parent_directory":"", "name":"folder2\\fake", "comment":"legacy"},
+        {"type":"file", "parent_directory":"", "name":"item10", "comment":"body"},
+        {"type":"orphan", "parent_directory":"folder2", "name":"资料 😀\\fake", "comment":"nested legacy"},
+        {"type":"file", "parent_directory":"folder2\\资料 😀", "name":"FILE2", "comment":""}
+    ], "errors":[]})
+    );
+
+    let nested = list(directory.path(), &["list", "--tree", "--json"]);
+    assert_eq!(nested.status.code(), Some(0));
+    assert!(nested.stderr.is_empty());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&nested.stdout).unwrap(),
+        serde_json::json!({"root_directory": directory.path(), "entries":[
+        {"type":"directory", "name":"FOLDER2", "comment":"", "children":[
+            {"type":"directory", "name":"资料 😀", "comment":null, "children":[
+                {"type":"file", "name":"FILE2", "comment":""}
+            ]},
+            {"type":"orphan", "name":"资料 😀\\fake", "comment":"nested legacy"}
+        ]},
+        {"type":"directory", "name":"folder10", "comment":"leaf", "children":[]},
+        {"type":"orphan", "name":"folder2\\fake", "comment":"legacy"},
+        {"type":"file", "name":"item10", "comment":"body"}
+    ], "errors":[]})
+    );
 }
 
 #[test]
@@ -498,13 +630,13 @@ fn recursive_list_emits_parent_records_then_naturally_ordered_subtrees_in_all_mo
     for (path, bytes) in fixtures {
         fs::write(directory.path().join(path), bytes).unwrap();
     }
-    let expected = serde_json::json!({"entries": [
-        {"name":"DIR2", "comment":"directory"},
-        {"name":"empty", "comment":""},
-        {"name":"z", "comment":"parent"},
-        {"name":"dir2\\orphan", "comment":"first\nsecond"},
-        {"name":"dir2\\middle\\deep\\lost", "comment":"literal\\n"},
-        {"name":"dir10\\file", "comment":"last"},
+    let expected = serde_json::json!({"root_directory": directory.path(), "entries": [
+        {"type":"directory", "parent_directory":"", "name":"DIR2", "comment":"directory"},
+        {"type":"orphan", "parent_directory":"", "name":"empty", "comment":""},
+        {"type":"orphan", "parent_directory":"", "name":"z", "comment":"parent"},
+        {"type":"orphan", "parent_directory":"dir2", "name":"orphan", "comment":"first\nsecond"},
+        {"type":"orphan", "parent_directory":"dir2\\middle\\deep", "name":"lost", "comment":"literal\\n"},
+        {"type":"orphan", "parent_directory":"dir10", "name":"file", "comment":"last"},
     ], "errors": []});
     for option in ["--recursive", "-r"] {
         for long in [false, true] {
@@ -576,6 +708,17 @@ fn directories_precede_files_in_natural_order_including_orphans() {
         names,
         ["dir2", "dir10", "file02", "File2", "file10", "missing"]
     );
+    assert_eq!(
+        value["entries"],
+        serde_json::json!([
+            {"type":"directory", "parent_directory":"", "name":"dir2", "comment":"directory two"},
+            {"type":"directory", "parent_directory":"", "name":"dir10", "comment":"directory ten"},
+            {"type":"orphan", "parent_directory":"", "name":"file02", "comment":"zero two"},
+            {"type":"file", "parent_directory":"", "name":"File2", "comment":"two"},
+            {"type":"orphan", "parent_directory":"", "name":"file10", "comment":"ten"},
+            {"type":"orphan", "parent_directory":"", "name":"missing", "comment":"orphan"}
+        ])
+    );
     let result = list(directory.path(), &["list"]);
     assert_eq!(result.status.code(), Some(0));
     assert_eq!(result.stdout, b"dir2\\    directory two\ndir10\\   directory ten\nfile02   zero two\nFile2    two\nfile10   ten\nmissing  orphan\n");
@@ -624,12 +767,29 @@ fn recursive_description_errors_preserve_other_records_in_every_mode() {
             assert!(result.stderr.is_empty());
             if args.contains(&"--json") {
                 let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
-                assert_eq!(value["entries"][0]["name"], "parent");
-                assert_eq!(value["entries"][1]["name"], "dir2\\child");
-                assert_eq!(
-                    value["entries"].as_array().unwrap().len(),
-                    if line.is_some() { 3 } else { 2 }
-                );
+                let child = serde_json::json!({"type":"orphan", "name":"child", "comment":"ok"});
+                let parent = serde_json::json!({"type":"orphan", "name":"parent", "comment":"ok"});
+                let ok = serde_json::json!({"type":"orphan", "name":"ok", "comment":"body"});
+                let expected = if args.contains(&"--tree") {
+                    let mut nodes = vec![
+                        serde_json::json!({"type":"directory", "name":"dir2", "comment":null, "children":[child]}),
+                    ];
+                    if line.is_some() {
+                        nodes.push(serde_json::json!({"type":"directory", "name":"dir10", "comment":null, "children":[ok]}));
+                    }
+                    nodes.push(parent);
+                    serde_json::json!(nodes)
+                } else {
+                    let mut entries = vec![
+                        serde_json::json!({"type":"orphan", "parent_directory":"", "name":"parent", "comment":"ok"}),
+                        serde_json::json!({"type":"orphan", "parent_directory":"dir2", "name":"child", "comment":"ok"}),
+                    ];
+                    if line.is_some() {
+                        entries.push(serde_json::json!({"type":"orphan", "parent_directory":"dir10", "name":"ok", "comment":"body"}));
+                    }
+                    serde_json::json!(entries)
+                };
+                assert_eq!(value["entries"], expected);
                 assert_eq!(value["errors"].as_array().unwrap().len(), 1);
                 assert_eq!(value["errors"][0]["code"], code);
                 assert_eq!(value["errors"][0]["file"], ".\\dir10\\descript.ion");
@@ -853,6 +1013,17 @@ fn nonordinary_names_remain_whole_orphans_and_equal_comparisons_use_utf16() {
     for name in names {
         assert!(actual.contains(&name));
     }
+    for entry in value["entries"].as_array().unwrap() {
+        assert_eq!(entry["parent_directory"], "");
+        assert_eq!(
+            entry["type"],
+            if entry["name"] == "child" {
+                "directory"
+            } else {
+                "orphan"
+            }
+        );
+    }
     let a = actual.iter().position(|name| *name == "same\0a").unwrap();
     let b = actual.iter().position(|name| *name == "same\0b").unwrap();
     assert_eq!(b, a + 1);
@@ -915,11 +1086,11 @@ fn default_directory_lists_all_records_in_natural_order_with_decoded_bodies() {
     assert!(result.stdout.ends_with(b"\n"));
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap(),
-        serde_json::json!({"entries": [
-            {"name": "empty", "comment": ""},
-            {"name": "orphan", "comment": "normal\\n"},
-            {"name": "zeta", "comment": "literal\\n"},
-            {"name": "照片 😀.txt", "comment": "first\n  second\n"}
+        serde_json::json!({"root_directory": directory.path(), "entries": [
+            {"type":"orphan", "parent_directory":"", "name":"empty", "comment":""},
+            {"type":"orphan", "parent_directory":"", "name":"orphan", "comment":"normal\\n"},
+            {"type":"orphan", "parent_directory":"", "name":"zeta", "comment":"literal\\n"},
+            {"type":"orphan", "parent_directory":"", "name":"照片 😀.txt", "comment":"first\n  second\n"}
         ], "errors": []})
     );
     assert_eq!(
@@ -982,8 +1153,8 @@ fn description_discovery_preserves_case_variants_and_descendants_of_empty_direct
     assert!(direct.stderr.is_empty());
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&direct.stdout).unwrap(),
-        serde_json::json!({"entries": [
-            {"name": "root", "comment": "root note"}
+        serde_json::json!({"root_directory": directory.path(), "entries": [
+            {"type":"orphan", "parent_directory":"", "name":"root", "comment":"root note"}
         ], "errors": []})
     );
 
@@ -991,12 +1162,24 @@ fn description_discovery_preserves_case_variants_and_descendants_of_empty_direct
         let result = list(directory.path(), &["list", mode, "--json"]);
         assert_eq!(result.status.code(), Some(0));
         assert!(result.stderr.is_empty());
+        let entries = if mode == "--tree" {
+            serde_json::json!([
+                {"type":"directory", "name":"middle", "comment":null, "children":[
+                    {"type":"directory", "name":"deep", "comment":null, "children":[
+                        {"type":"orphan", "name":"child", "comment":"child note"}
+                    ]}
+                ]},
+                {"type":"orphan", "name":"root", "comment":"root note"}
+            ])
+        } else {
+            serde_json::json!([
+                {"type":"orphan", "parent_directory":"", "name":"root", "comment":"root note"},
+                {"type":"orphan", "parent_directory":"middle\\deep", "name":"child", "comment":"child note"}
+            ])
+        };
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap(),
-            serde_json::json!({"entries": [
-                {"name": "root", "comment": "root note"},
-                {"name": "middle\\deep\\child", "comment": "child note"}
-            ], "errors": []})
+            serde_json::json!({"root_directory": directory.path(), "entries":entries, "errors":[]})
         );
     }
 }
@@ -1014,7 +1197,11 @@ fn missing_description_and_header_only_files_are_successful_empty_lists() {
         }
         let result = list(directory.path(), &["--json", "list", "."]);
         assert_eq!(result.status.code(), Some(0));
-        assert_eq!(result.stdout, b"{\"entries\":[],\"errors\":[]}\n");
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap(),
+            serde_json::json!({"root_directory": directory.path(), "entries":[], "errors":[]})
+        );
+        assert!(result.stdout.ends_with(b"\n"));
         assert!(result.stderr.is_empty());
         let result = list(directory.path(), &["list"]);
         assert_eq!(result.status.code(), Some(0));
@@ -1053,14 +1240,20 @@ fn bad_records_are_skipped_without_losing_records_before_or_after_them() {
             assert!(result.stderr.is_empty());
             if args.contains(&"--json") {
                 let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
-                assert_eq!(
-                    value["entries"],
+                let expected = if args.contains(&"--tree") {
                     serde_json::json!([
-                        {"name":"first", "comment":"ok"},
-                        {"name":"second", "comment":"multiline\nbody"},
-                        {"name":"third", "comment":"later"},
+                        {"type":"orphan", "name":"first", "comment":"ok"},
+                        {"type":"orphan", "name":"second", "comment":"multiline\nbody"},
+                        {"type":"orphan", "name":"third", "comment":"later"}
                     ])
-                );
+                } else {
+                    serde_json::json!([
+                        {"type":"orphan", "parent_directory":"", "name":"first", "comment":"ok"},
+                        {"type":"orphan", "parent_directory":"", "name":"second", "comment":"multiline\nbody"},
+                        {"type":"orphan", "parent_directory":"", "name":"third", "comment":"later"},
+                    ])
+                };
+                assert_eq!(value["entries"], expected);
                 assert_eq!(value["errors"].as_array().unwrap().len(), 1);
                 assert_eq!(value["errors"][0]["code"], code);
                 assert_eq!(value["errors"][0]["file"], ".\\descript.ion");
@@ -1123,13 +1316,18 @@ fn multiple_bad_lines_are_reported_in_physical_order_after_the_list() {
         assert!(result.stderr.is_empty());
         if args.contains(&"--json") {
             let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
-            assert_eq!(
-                value["entries"],
+            let expected = if args.contains(&"--tree") {
                 serde_json::json!([
-                    {"name":"after", "comment":"readable"},
-                    {"name":"first", "comment":"kept"},
+                    {"type":"orphan", "name":"after", "comment":"readable"},
+                    {"type":"orphan", "name":"first", "comment":"kept"}
                 ])
-            );
+            } else {
+                serde_json::json!([
+                    {"type":"orphan", "parent_directory":"", "name":"after", "comment":"readable"},
+                    {"type":"orphan", "parent_directory":"", "name":"first", "comment":"kept"},
+                ])
+            };
+            assert_eq!(value["entries"], expected);
             let errors = value["errors"].as_array().unwrap();
             assert_eq!(errors.len(), 5);
             for (error, (code, line)) in errors
@@ -1189,9 +1387,9 @@ fn skipped_description_files_do_not_hide_descendants_and_errors_follow_traversal
     assert_eq!(
         value["entries"],
         serde_json::json!([
-            {"name":"parent", "comment":"kept"},
-            {"name":"dir2\\deep\\child", "comment":"kept"},
-            {"name":"dir10\\deep\\after", "comment":"kept"},
+            {"type":"orphan", "parent_directory":"", "name":"parent", "comment":"kept"},
+            {"type":"orphan", "parent_directory":"dir2\\deep", "name":"child", "comment":"kept"},
+            {"type":"orphan", "parent_directory":"dir10\\deep", "name":"after", "comment":"kept"},
         ])
     );
     let errors = value["errors"].as_array().unwrap();
@@ -1205,7 +1403,24 @@ fn skipped_description_files_do_not_hide_descendants_and_errors_follow_traversal
     assert_eq!(errors[2]["file"], ".\\dir10\\descript.ion");
     let tree = list(directory.path(), &["list", "--tree", "--json"]);
     assert_eq!(tree.status.code(), Some(1));
-    assert_eq!(tree.stdout, recursive.stdout);
+    let tree_value: serde_json::Value = serde_json::from_slice(&tree.stdout).unwrap();
+    assert_eq!(tree_value["errors"], value["errors"]);
+    assert_eq!(
+        tree_value["entries"],
+        serde_json::json!([
+            {"type":"directory", "name":"dir2", "comment":null, "children":[
+                {"type":"directory", "name":"deep", "comment":null, "children":[
+                    {"type":"orphan", "name":"child", "comment":"kept"}
+                ]}
+            ]},
+            {"type":"directory", "name":"dir10", "comment":null, "children":[
+                {"type":"directory", "name":"deep", "comment":null, "children":[
+                    {"type":"orphan", "name":"after", "comment":"kept"}
+                ]}
+            ]},
+            {"type":"orphan", "name":"parent", "comment":"kept"}
+        ])
+    );
     let direct = list(directory.path(), &["list", "dir10", "--json"]);
     assert_eq!(direct.status.code(), Some(1));
     assert!(direct.stderr.is_empty());
@@ -1251,7 +1466,11 @@ fn list_rejects_extra_arguments_and_options_and_supports_directory_after_separat
     }
     let result = list(directory.path(), &["--json", "list", "--", "--json"]);
     assert_eq!(result.status.code(), Some(0));
-    assert_eq!(result.stdout, b"{\"entries\":[],\"errors\":[]}\n");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap(),
+        serde_json::json!({"root_directory": directory.path().join("--json"), "entries":[], "errors":[]})
+    );
+    assert!(result.stdout.ends_with(b"\n"));
     assert!(result.stderr.is_empty());
 }
 
@@ -1281,7 +1500,8 @@ fn locked_description_is_reported_and_descendants_are_still_visited() {
     assert!(result.stderr.is_empty());
     let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(value["entries"].as_array().unwrap().len(), 1);
-    assert_eq!(value["entries"][0]["name"], "child\\after");
+    assert_eq!(value["entries"][0]["parent_directory"], "child");
+    assert_eq!(value["entries"][0]["name"], "after");
     assert_eq!(value["errors"][0]["code"], "io_error");
 }
 

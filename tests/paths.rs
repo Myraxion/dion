@@ -329,6 +329,11 @@ fn check_link_entry(directory: &Path, link: &Path, target_parent: &Path, is_dir:
     success(&result);
     let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(value["entries"][0]["comment"], "updated");
+    assert_eq!(
+        value["entries"][0]["type"],
+        if is_dir { "directory" } else { "file" }
+    );
+    assert_eq!(value["entries"][0]["parent_directory"], "");
     let result = run(directory, &["list", directory.to_str().unwrap()]);
     success(&result);
     assert_eq!(
@@ -384,17 +389,35 @@ fn check_link_entry(directory: &Path, link: &Path, target_parent: &Path, is_dir:
             assert!(!String::from_utf8_lossy(&result.stdout).contains("nested"));
             if !options.contains(&"--json") {
                 assert!(String::from_utf8_lossy(&result.stdout).starts_with("link\\"));
+            } else {
+                let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+                let entry = &value["entries"][0];
+                assert_eq!(entry["type"], "directory");
+                assert_eq!(entry["name"], "link");
+                if options.contains(&"--tree") {
+                    assert_eq!(entry["children"], serde_json::json!([]));
+                }
             }
             args.insert(1, path);
             let result = run(directory, &args);
             success(&result);
             if options.contains(&"--json") {
+                let entries = if options.contains(&"--tree") {
+                    serde_json::json!([
+                        {"type":"directory", "name":"nested", "comment":null, "children":[
+                            {"type":"orphan", "name":"deep", "comment":"nested"}
+                        ]},
+                        {"type":"orphan", "name":"child", "comment":"inside"}
+                    ])
+                } else {
+                    serde_json::json!([
+                        {"type":"orphan", "parent_directory":"", "name":"child", "comment":"inside"},
+                        {"type":"orphan", "parent_directory":"nested", "name":"deep", "comment":"nested"}
+                    ])
+                };
                 assert_eq!(
                     serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap(),
-                    serde_json::json!({"entries":[
-                        {"name":"child", "comment":"inside"},
-                        {"name":"nested\\deep", "comment":"nested"},
-                    ], "errors": []})
+                    serde_json::json!({"root_directory": link, "entries":entries, "errors": []})
                 );
             } else {
                 let text = String::from_utf8(result.stdout).unwrap();
@@ -440,7 +463,9 @@ fn recursive_legacy_names_remain_complete_and_never_visit_paths_named_by_records
         assert!(
             entries
                 .iter()
-                .any(|entry| entry["name"] == format!("child\\{name}"))
+                .any(|entry| entry["parent_directory"] == "child"
+                    && entry["name"] == name
+                    && entry["type"] == "orphan")
         );
     }
     let result = run(directory.path(), &["list", "-r", "-l"]);
@@ -459,10 +484,21 @@ fn recursive_legacy_names_remain_complete_and_never_visit_paths_named_by_records
     }
     let tree_json = run(directory.path(), &["list", "--tree", "--json"]);
     success(&tree_json);
-    assert_eq!(
-        tree_json.stdout,
-        run(directory.path(), &["list", "-r", "--json"]).stdout
-    );
+    let value: serde_json::Value = serde_json::from_slice(&tree_json.stdout).unwrap();
+    assert_eq!(value["errors"], serde_json::json!([]));
+    assert_eq!(value["entries"].as_array().unwrap().len(), 1);
+    let node = &value["entries"][0];
+    assert_eq!(node["type"], "directory");
+    assert_eq!(node["name"], "child");
+    assert_eq!(node["comment"], serde_json::Value::Null);
+    let children = node["children"].as_array().unwrap();
+    assert_eq!(children.len(), names.len());
+    for name in names {
+        assert!(
+            children.iter().any(|entry| entry
+                == &serde_json::json!({"type":"orphan", "name":name, "comment":"body"}))
+        );
+    }
     assert_eq!(
         fs::read(directory.path().join("child/descript.ion")).unwrap(),
         bytes.as_bytes()

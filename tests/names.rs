@@ -170,8 +170,8 @@ fn ordinal_duplicate_conflicts_preserve_strict_commands_and_list_diagnostics() {
     assert_eq!(
         listing["entries"],
         serde_json::json!([
-            {"name":"k.txt", "comment":"first"},
-            {"name":"K.txt", "comment":"kelvin"},
+            {"type":"file", "parent_directory":"", "name":"k.txt", "comment":"first"},
+            {"type":"orphan", "parent_directory":"", "name":"K.txt", "comment":"kelvin"},
         ])
     );
     assert_eq!(listing["errors"].as_array().unwrap().len(), 1);

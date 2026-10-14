@@ -54,6 +54,12 @@ Language affects program-generated help and diagnostics. It does not change comm
 
 - `--lang <en|zh-CN|auto>` selects the program language; `DION_LANG` sets a default.
 - `--json` (`-j`) writes machine-readable JSON and stable exit codes. It does not change the output mode for help.
+
+Flat `list` JSON entries contain `type` (`file`, `directory`, or `orphan`), `parent_directory`, `name`, and `comment`. The parent directory is relative to the query's starting directory, uses backslashes without a trailing separator, and is `""` for records in the starting directory. `name` preserves the original record spelling without a directory prefix.
+
+Both list JSON formats include `root_directory`, `entries`, and `errors` at the top level, including empty lists and results with skipped errors. `root_directory` is the absolute starting path, with dot components resolved lexically without following symlinks or junctions; path spelling and Windows extended path prefixes are preserved.
+
+`list --tree --json` returns a nested tree using the text tree's node selection and sorting, without the starting root node. Directory nodes always include `children`; files and orphans omit it. Supporting directories have `comment: null`, while an existing empty comment is `""`. Tree nodes omit `parent_directory`. Both list formats omit program extension fields and apply equally to Everything queries.
 - `--help` (`-h`) shows help. Use `dion help <command>` for a command or alias.
 - Place `--` before a path or comment that starts with `-`.
 

@@ -97,10 +97,10 @@ fn tc_root_fixture_decodes_single_line_spaced_unicode_and_multiline() {
     assert_eq!(
         json_out(&res),
         serde_json::json!({
-            "entries": [
-                { "name": "父文件夹1", "comment": "111测试" },
-                { "name": "父文件夹1 - 副本", "comment": "222测试" },
-                { "name": "父文件夹2", "comment": "测试测试\n。" }
+            "root_directory": dir.path(), "entries": [
+                { "type": "orphan", "parent_directory": "", "name": "父文件夹1", "comment": "111测试" },
+                { "type": "orphan", "parent_directory": "", "name": "父文件夹1 - 副本", "comment": "222测试" },
+                { "type": "orphan", "parent_directory": "", "name": "父文件夹2", "comment": "测试测试\n。" }
             ],
             "errors": []
         })

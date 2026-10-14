@@ -107,18 +107,22 @@ Alias: ls
 Arguments and defaults:
   [directory]      Defaults to the current directory
   --long, -l       Use one-column output
-  --recursive, -r  Include subdirectories; names are relative to the starting directory
+  --recursive, -r  Include subdirectories
   --everything     Find recursive description files with Everything; requires --recursive or --tree
   --everything-instance <name>  Select an instance; defaults to 1.5a, then the unnamed instance
   --tree, -t       Show a tree and recurse automatically; conflicts with --long
   --all, -a        Include default-excluded directories during recursive listing
   --color <mode>   Name color: auto (default), always, or never
-  --json, -j       Output JSON; tree mode returns ordinary recursive JSON
+  --json, -j       Output JSON; tree mode returns a nested tree
   --help, -h       Show help
 
 By default, list the current directory only, in aligned columns with directories first and natural name sorting.
 auto enables color only in a supported terminal. A nonempty NO_COLOR disables default color; always overrides it.
 JSON output never includes color codes.
+Both JSON formats include root_directory (the absolute starting path), entries, and errors, even for empty lists. root_directory retains the query's link path rather than resolving its target.
+Flat JSON entries contain type (file, directory, or orphan), parent_directory, name, and comment.
+parent_directory is relative to the starting directory, uses backslashes without a trailing separator, and is "" at the start. name preserves the original record spelling.
+Tree JSON omits parent_directory; directories always contain children, while files and orphans omit it. Supporting directories have comment: null; existing empty comments are "".
 Recursive listing skips $RECYCLE.BIN, System Volume Information, .git, node_modules, .venv, __pycache__, .pytest_cache, .next, .svn, .mypy_cache, .ruff_cache, .tox, .nox, and .parcel-cache by name, case-insensitively. --all includes them. This does not change the directory symlink and junction boundary.
 Everything mode searches indexed paths only and can omit excluded files or folders. It requires a running Everything 1.4.1+ client with its database loaded; IPC failures are reported without falling back to directory traversal.
 Bad records and read errors are skipped by default; text output summarizes errors and JSON returns entries and errors.
@@ -183,18 +187,22 @@ const LIST: &str = r#"用途：列出目录内部条目的备注，包括孤立�
 参数与默认行为：
   [directory]      默认当前目录
   --long, -l       单栏展示
-  --recursive, -r  递归查询子目录，名称相对于起始目录
+  --recursive, -r  递归查询子目录
   --everything     使用 Everything 索引查找递归备注文件；必须与 --recursive 或 --tree 一起使用
   --everything-instance <name>  指定实例；默认优先 1.5a，其次未命名实例
   --tree, -t       树状展示，自动递归，与 --long 互斥
   --all, -a        递归时包含默认排除目录
   --color <mode>   名称颜色：auto（默认）、always 或 never
-  --json, -j       输出 JSON；树模式输出普通递归 JSON
+  --json, -j       输出 JSON；树模式输出嵌套树
   --help, -h       显示帮助
 
 默认只查询当前层，双栏展示完整正文，目录优先、名称自然排序。
 auto 仅在支持颜色的终端启用；非空 NO_COLOR 可关闭默认颜色，always 可覆盖。
 JSON 输出始终不添加颜色。
+两种 JSON 顶层均含 root_directory（起始目录的绝对路径）、entries、errors，空列表也包含。root_directory 保留查询使用的链接路径，不解析链接目标。
+扁平 JSON 条目含 type（file、directory、orphan）、parent_directory、name、comment。
+parent_directory 相对于起始目录，使用反斜杠且无尾部分隔符，起始目录为 ""；name 保留原始记录名称。
+树 JSON 不含 parent_directory；目录始终包含 children，文件和孤立记录不包含。辅助目录使用 comment: null，已有空备注使用 ""。
 递归默认按名称（不区分大小写）跳过 $RECYCLE.BIN、System Volume Information、.git、node_modules、.venv、__pycache__、.pytest_cache、.next、.svn、.mypy_cache、.ruff_cache、.tox、.nox 和 .parcel-cache；--all 包含这些目录。主动跳过不报错；目录自身备注仍列出。
 递归不进入途中遇到的目录符号链接或 Junction；显式指定为起始目录时读取内部。
 Everything 模式仅查询其索引覆盖的路径，可能遗漏被索引排除的文件或目录。要求 Everything 1.4.1 或更高版本正在运行且数据库已就绪；IPC 失败时直接报错，不回退为目录遍历。

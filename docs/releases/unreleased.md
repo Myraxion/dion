@@ -2,13 +2,19 @@
 
 ## JSON 破坏性变更
 
-- `list --json` 的每条 `entries` 记录只保留 `name`、`comment`，删除 `extension`；顶层 `entries`、`errors` 数组及退出码规则不变。普通、单栏、递归、树状和 Everything 查询统一使用此结构；未知程序扩展记录仍列出已解析的正文。
+- 所有 `list` JSON 条目新增 `type`（`file`、`directory`、`orphan`），删除 `extension`；顶层新增 `root_directory`，表示查询起始目录的绝对路径（词法处理点组件，不解析链接目标，保留路径拼写及扩展路径前缀）；空列表也包含此字段，`entries`、`errors` 数组及退出码规则不变，未知程序扩展记录仍列出已解析的正文。
+- 普通、单栏及递归扁平 JSON 条目包含 `type`、`parent_directory`、`name`、`comment`。`name` 改为备注文件中的原始记录名称，不再表示完整相对路径；`parent_directory` 表示记录所属目录相对于查询起始目录的路径，使用反斜杠且无尾部分隔符，起始目录为 `""`。
+- `--tree --json` 改为嵌套树，沿用文本树的节点选择及排序，包含必要的辅助目录且不显示起始目录根节点。目录节点始终包含 `children`，文件和孤立记录不包含；辅助目录使用 `comment: null`，已有空备注使用 `comment: ""`。树节点不含 `parent_directory`。两种列表均不输出程序扩展字段，Everything 查询使用相同契约。
 - `get --json` 将 `extension` 改名为 `program_extension`，值仍为 `none`、`tc`、`unknown`。旧字段不再输出，依赖它的脚本应更新字段名；原先通过列表检查程序扩展类型的脚本需要对条目调用 `get --json`。
 
 新结构示例：
 
 ```json
-{"entries":[{"name":"a.txt","comment":"备注正文"}],"errors":[]}
+{"root_directory":"D:\\data","entries":[{"type":"file","parent_directory":"folder","name":"a.txt","comment":"备注正文"}],"errors":[]}
+```
+
+```json
+{"root_directory":"D:\\data","entries":[{"type":"directory","name":"folder","comment":null,"children":[{"type":"file","name":"a.txt","comment":"备注正文"}]}],"errors":[]}
 ```
 
 ```json

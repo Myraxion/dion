@@ -39,7 +39,7 @@ fn viewing_aliases_match_text_json_and_errors() {
 }
 
 #[test]
-fn list_alias_accepts_list_options_and_short_tree_matches_recursive_json() {
+fn list_alias_accepts_list_options_and_short_tree_matches_tree_json() {
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir(dir.path().join("child")).unwrap();
     fs::write(dir.path().join("descript.ion"), "\u{feff}root 根备注\n").unwrap();
@@ -57,7 +57,7 @@ fn list_alias_accepts_list_options_and_short_tree_matches_recursive_json() {
         (vec!["ls", "-t"], vec!["list", "--tree"]),
         (
             vec!["-j", "ls", "-t", "-r"],
-            vec!["list", "--recursive", "--json"],
+            vec!["list", "--tree", "--recursive", "--json"],
         ),
     ] {
         let expected = run(dir.path(), &full);

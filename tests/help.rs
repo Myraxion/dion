@@ -197,7 +197,11 @@ fn every_command_has_three_help_routes_without_required_operands() {
                 "符号链接",
                 "Junction",
                 "起始目录",
-                "普通递归 JSON",
+                "嵌套树",
+                "parent_directory",
+                "root_directory",
+                "children",
+                "orphan",
             ],
         ),
         (

@@ -152,7 +152,11 @@ fn waits_for_ready_file_contents_before_querying_the_peer() {
     let peer = Peer::new(&response(&[]), "delayed-ready");
     let output = peer.list(directory.path(), &["-r", "--json"]);
     success(&output);
-    assert_eq!(output.stdout, b"{\"entries\":[],\"errors\":[]}\n");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
+        serde_json::json!({"root_directory": directory.path(), "entries":[], "errors":[]})
+    );
+    assert!(output.stdout.ends_with(b"\n"));
 }
 
 #[test]
@@ -174,7 +178,7 @@ fn explicit_instance_queries_only_indexed_candidates_with_a_path_scoped_filename
     success(&output);
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
-        serde_json::json!({"entries":[{"name":"root","comment":"indexed"}],"errors":[]})
+        serde_json::json!({"root_directory": directory.path(), "entries":[{"type":"orphan", "parent_directory":"", "name":"root", "comment":"indexed"}],"errors":[]})
     );
     let query = fs::read_to_string(peer.dir.path().join("query.txt")).unwrap();
     assert_eq!(
@@ -252,7 +256,7 @@ fn failed_ancestor_metadata_skips_its_subtree_and_preserves_other_indexed_record
     assert_eq!(
         value["entries"],
         serde_json::json!([
-            {"name":"later\\after","comment":"kept"},
+            {"type":"orphan", "parent_directory":"later", "name":"after", "comment":"kept"},
         ])
     );
     assert_eq!(value["errors"].as_array().unwrap().len(), 1);
@@ -315,6 +319,7 @@ fn indexed_results_match_scanning_in_all_layouts_with_exclusions_and_record_erro
         b"\xef\xbb\xbfDIR2 directory note\n.git own note\nroot parent\n",
     )
     .unwrap();
+    fs::write(directory.path().join("root"), b"").unwrap();
     for (name, bytes) in [
         ("dir10", &b"\xef\xbb\xbften last\n"[..]),
         (
@@ -346,6 +351,7 @@ fn indexed_results_match_scanning_in_all_layouts_with_exclusions_and_record_erro
         vec!["-r", "--all"],
         vec!["--tree", "--all"],
         vec!["-r", "--all", "--json"],
+        vec!["--tree", "--all", "--json"],
     ] {
         let scanned = cli(directory.path()).args(&options).output().unwrap();
         let indexed = peer.list(directory.path(), &options);
@@ -363,7 +369,11 @@ fn indexed_zero_results_do_not_read_an_unindexed_bad_description() {
     let peer = Peer::new(&response(&[]), "reply");
     let output = peer.list(directory.path(), &["--tree", "--json"]);
     success(&output);
-    assert_eq!(output.stdout, b"{\"entries\":[],\"errors\":[]}\n");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
+        serde_json::json!({"root_directory": directory.path(), "entries":[], "errors":[]})
+    );
+    assert!(output.stdout.ends_with(b"\n"));
 }
 
 #[test]
@@ -385,7 +395,7 @@ fn stale_missing_directory_candidates_are_skipped_without_hiding_valid_records()
     success(&output);
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
-        serde_json::json!({"entries":[{"name":"root","comment":"kept"}],"errors":[]})
+        serde_json::json!({"root_directory": directory.path(), "entries":[{"type":"orphan", "parent_directory":"", "name":"root", "comment":"kept"}],"errors":[]})
     );
 }
 
@@ -431,9 +441,11 @@ fn indexed_junctions_are_skipped_but_an_explicit_junction_root_is_read() {
     assert_eq!(root.stdout, "└── LINK\\  own note\n".as_bytes());
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&explicit.stdout).unwrap(),
-        serde_json::json!({"entries":[
-            {"name":"inside","comment":"root"},
-            {"name":"deep\\child","comment":"nested"},
+        serde_json::json!({"root_directory": link, "entries":[
+            {"type":"directory", "name":"deep", "comment":null, "children":[
+                {"type":"orphan", "name":"child", "comment":"nested"}
+            ]},
+            {"type":"orphan", "name":"inside", "comment":"root"},
         ],"errors":[]})
     );
 }
@@ -517,6 +529,10 @@ fn default_instance_prefers_15a_falls_back_only_when_absent_and_never_after_fail
     drop(unready);
     let output = run();
     success(&output);
-    assert_eq!(output.stdout, b"{\"entries\":[],\"errors\":[]}\n");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
+        serde_json::json!({"root_directory": directory.path(), "entries":[], "errors":[]})
+    );
+    assert!(output.stdout.ends_with(b"\n"));
     assert!(unnamed.dir.path().join("query.txt").exists());
 }

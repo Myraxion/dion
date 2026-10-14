@@ -8,7 +8,7 @@ use crate::{
 };
 use std::{
     cmp::Ordering,
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     fs,
     io::{self, Write},
     path::Path,
@@ -61,28 +61,40 @@ pub fn list(
             collect_indexed_directory(directory, &descriptions, options.include_excluded)?
         }
     };
-    let result = if options.format == Format::Tree && !options.json {
-        let nodes = collected.into_tree();
-        tree(output, &nodes, color)
-            .and_then(|()| write_errors(output, &errors, !nodes.is_empty(), language))
+    let root_directory = if options.json {
+        // Resolve the query location lexically, retaining an explicit link path.
+        let absolute =
+            std::path::absolute(directory).map_err(|error| Error::io(error, directory))?;
+        Some(
+            absolute
+                .to_str()
+                .ok_or_else(|| {
+                    Error::new("invalid_encoding", Diagnostic::InvalidDirectoryEncoding, 1)
+                        .at_file(directory)
+                })?
+                .to_owned(),
+        )
     } else {
-        // JSON always uses flat records, including when tree traversal was requested.
+        None
+    };
+    let result = if options.format == Format::Tree {
+        let nodes = collected.into_tree();
+        if let Some(root_directory) = &root_directory {
+            write_json(output, root_directory, &nodes, &errors, language)
+        } else {
+            tree(output, &nodes, color)
+                .and_then(|()| write_errors(output, &errors, !nodes.is_empty(), language))
+        }
+    } else {
         let mut entries = Vec::new();
         collected.flatten("", &mut entries);
-        if options.json {
-            serde_json::to_writer(
-                &mut *output,
-                &ListOutput {
-                    entries: &entries,
-                    errors: errors
-                        .iter()
-                        .map(|error| error.localized(language))
-                        .collect(),
-                },
-            )
-            .map_err(io::Error::from)
-            .and_then(|()| output.write_all(b"\n"))
+        if let Some(root_directory) = &root_directory {
+            write_json(output, root_directory, &entries, &errors, language)
         } else {
+            for entry in &mut entries {
+                // Text layouts continue to display the full relative name.
+                entry.name = relative_name(&entry.parent_directory, &entry.name);
+            }
             let result = if options.format == Format::Long {
                 long(output, &entries, color)
             } else {
@@ -96,9 +108,32 @@ pub fn list(
 }
 
 #[derive(serde::Serialize)]
-struct ListOutput<'a> {
-    entries: &'a [Entry],
+struct ListOutput<'a, T> {
+    root_directory: &'a str,
+    entries: &'a [T],
     errors: Vec<LocalizedError<'a>>,
+}
+
+fn write_json(
+    output: &mut impl Write,
+    root_directory: &str,
+    entries: &[impl serde::Serialize],
+    errors: &[Error],
+    language: Language,
+) -> io::Result<()> {
+    serde_json::to_writer(
+        &mut *output,
+        &ListOutput {
+            root_directory,
+            entries,
+            errors: errors
+                .iter()
+                .map(|error| error.localized(language))
+                .collect(),
+        },
+    )
+    .map_err(io::Error::from)?;
+    output.write_all(b"\n")
 }
 
 fn write_errors(
@@ -125,23 +160,36 @@ fn write_errors(
 
 #[derive(serde::Serialize)]
 struct Entry {
+    #[serde(rename = "type")]
+    kind: EntryType,
+    parent_directory: String,
     name: String,
     comment: String,
     #[serde(skip)]
-    directory: bool,
-    #[serde(skip)]
     name_utf16: Vec<u16>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+enum EntryType {
+    File,
+    Directory,
+    Orphan,
 }
 
 fn columns(output: &mut impl Write, entries: &[Entry], color: bool) -> io::Result<()> {
     let width = entries
         .iter()
-        .map(|entry| entry.name.width() + usize::from(entry.directory))
+        .map(|entry| entry.name.width() + usize::from(entry.kind == EntryType::Directory))
         .max()
         .unwrap_or(0);
     for entry in entries {
         let name = &entry.name;
-        let marker = if entry.directory { "\\" } else { "" };
+        let marker = if entry.kind == EntryType::Directory {
+            "\\"
+        } else {
+            ""
+        };
         let padding = " ".repeat(width - name.width() - marker.len() + 2);
         for (index, line) in entry.comment.split('\n').enumerate() {
             if index == 0 {
@@ -160,7 +208,11 @@ fn long(output: &mut impl Write, entries: &[Entry], color: bool) -> io::Result<(
         write_name(
             output,
             &entry.name,
-            if entry.directory { "\\" } else { "" },
+            if entry.kind == EntryType::Directory {
+                "\\"
+            } else {
+                ""
+            },
             color,
         )?;
         writeln!(output)?;
@@ -178,14 +230,13 @@ struct Directory {
 }
 
 impl Directory {
-    fn flatten(self, prefix: &str, output: &mut Vec<Entry>) {
+    fn flatten(self, parent_directory: &str, output: &mut Vec<Entry>) {
         for mut entry in self.entries {
-            // Append the complete legacy name as text, never as path components.
-            entry.name.insert_str(0, prefix);
+            entry.parent_directory = parent_directory.to_owned();
             output.push(entry);
         }
         for (name, child) in self.children {
-            child.flatten(&format!("{prefix}{name}\\"), output);
+            child.flatten(&relative_name(parent_directory, &name), output);
         }
     }
 
@@ -196,15 +247,15 @@ impl Directory {
             .map(|entry| TreeNode {
                 name: entry.name,
                 name_utf16: entry.name_utf16,
-                directory: entry.directory,
+                kind: entry.kind,
                 comment: Some(entry.comment),
-                children: Vec::new(),
+                children: (entry.kind == EntryType::Directory).then(Vec::new),
             })
             .collect();
         let mut directory_nodes: BTreeMap<_, _> = nodes
             .iter()
             .enumerate()
-            .filter(|(_, node)| node.directory)
+            .filter(|(_, node)| node.kind == EntryType::Directory)
             .map(|(index, node)| (Name::new(&node.name), index))
             .collect();
         for (name, child) in self.children {
@@ -214,33 +265,46 @@ impl Directory {
             }
             let key = Name::new(&name);
             if let Some(&index) = directory_nodes.get(&key) {
-                nodes[index].children = children;
+                nodes[index].children = Some(children);
             } else {
                 directory_nodes.insert(key, nodes.len());
                 nodes.push(TreeNode {
                     name_utf16: name.encode_utf16().chain(Some(0)).collect(),
                     name,
-                    directory: true,
+                    kind: EntryType::Directory,
                     comment: None,
-                    children,
+                    children: Some(children),
                 });
             }
         }
         nodes.sort_by(|a, b| {
-            b.directory
-                .cmp(&a.directory)
+            (b.kind == EntryType::Directory)
+                .cmp(&(a.kind == EntryType::Directory))
                 .then_with(|| compare_names(&a.name_utf16, &b.name_utf16))
         });
         nodes
     }
 }
 
+// Append names as opaque text without interpreting their path components.
+fn relative_name(parent_directory: &str, name: &str) -> String {
+    if parent_directory.is_empty() {
+        name.to_owned()
+    } else {
+        format!("{parent_directory}\\{name}")
+    }
+}
+
+#[derive(serde::Serialize)]
 struct TreeNode {
+    #[serde(rename = "type")]
+    kind: EntryType,
     name: String,
+    #[serde(skip)]
     name_utf16: Vec<u16>,
-    directory: bool,
     comment: Option<String>,
-    children: Vec<TreeNode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    children: Option<Vec<TreeNode>>,
 }
 
 fn tree(output: &mut impl Write, nodes: &[TreeNode], color: bool) -> io::Result<()> {
@@ -257,12 +321,17 @@ fn render_tree(
         let last = index + 1 == nodes.len();
         let branch = if last { "└── " } else { "├── " };
         let continuation = if last { "    " } else { "│   " };
-        let marker = if node.directory { "\\" } else { "" };
+        let marker = if node.kind == EntryType::Directory {
+            "\\"
+        } else {
+            ""
+        };
+        let children = node.children.as_deref().unwrap_or_default();
         write_tree_structure(output, prefix, color)?;
         write_tree_structure(output, branch, color)?;
         write_name(output, &node.name, marker, color)?;
         if let Some(comment) = &node.comment {
-            let has_children = !node.children.is_empty();
+            let has_children = !children.is_empty();
             let child_guide = "│   ";
             let raw_width = node.name.width() + marker.len() + 2;
             let padding_len = if has_children {
@@ -286,12 +355,7 @@ fn render_tree(
         } else {
             writeln!(output)?;
         }
-        render_tree(
-            output,
-            &node.children,
-            &format!("{prefix}{continuation}"),
-            color,
-        )?;
+        render_tree(output, children, &format!("{prefix}{continuation}"), color)?;
     }
     Ok(())
 }
@@ -325,7 +389,7 @@ fn collect_directory(
     errors: &mut Vec<Error>,
 ) -> Result<Directory, Error> {
     // Finish enumeration first: a failed directory contributes no partial contents.
-    let mut directories = BTreeSet::new();
+    let mut entry_types = BTreeMap::new();
     let mut children = Vec::new();
     static DESCRIPTION_NAME: OnceLock<Name> = OnceLock::new();
     let description_name = DESCRIPTION_NAME.get_or_init(|| Name::new("descript.ion"));
@@ -350,10 +414,17 @@ fn collect_directory(
         {
             has_description = true;
         }
-        if is_directory {
-            if let Some(name) = name.to_str() {
-                directories.insert(Name::new(name));
+        if let Some(name) = name.to_str() {
+            // Keep directory precedence if the filesystem admits case variants.
+            if is_directory {
+                entry_types.insert(Name::new(name), EntryType::Directory);
+            } else {
+                entry_types
+                    .entry(Name::new(name))
+                    .or_insert(EntryType::File);
             }
+        }
+        if is_directory {
             // Windows file types classify both directory symlinks and Junctions
             // as symlinks; other directory reparse points remain traversable.
             if recursive && kind.is_dir() {
@@ -374,7 +445,7 @@ fn collect_directory(
     }
     let file = directory.join("descript.ion");
     let entries = if has_description {
-        read_description(&file, &directories, errors)
+        read_description(&file, &entry_types, errors)
     } else {
         Vec::new()
     };
@@ -557,7 +628,7 @@ fn collect_indexed_branch(
         }
         DirectoryAccess::Failed(error) => return Err(error),
     }
-    let mut directories = BTreeSet::new();
+    let mut entry_types = BTreeMap::new();
     if branch.has_description {
         for entry in fs::read_dir(&branch.path).map_err(|error| Error::io(error, &branch.path))? {
             let entry = entry.map_err(|error| Error::io(error, &branch.path))?;
@@ -571,14 +642,20 @@ fn collect_indexed_branch(
             };
             #[cfg(not(windows))]
             let is_directory = kind.is_dir();
-            if is_directory && let Some(name) = entry.file_name().to_str() {
-                directories.insert(Name::new(name));
+            if let Some(name) = entry.file_name().to_str() {
+                if is_directory {
+                    entry_types.insert(Name::new(name), EntryType::Directory);
+                } else {
+                    entry_types
+                        .entry(Name::new(name))
+                        .or_insert(EntryType::File);
+                }
             }
         }
     }
     let file = branch.path.join("descript.ion");
     let entries = if branch.has_description {
-        read_description(&file, &directories, errors)
+        read_description(&file, &entry_types, errors)
     } else {
         Vec::new()
     };
@@ -600,7 +677,7 @@ fn collect_indexed_branch(
 
 fn read_description(
     file: &Path,
-    directories: &BTreeSet<Name>,
+    entry_types: &BTreeMap<Name, EntryType>,
     errors: &mut Vec<Error>,
 ) -> Vec<Entry> {
     let bytes = match storage::read(file) {
@@ -617,7 +694,11 @@ fn read_description(
                 records
                     .into_iter()
                     .map(|record| Entry {
-                        directory: directories.contains(&Name::new(record.name)),
+                        kind: entry_types
+                            .get(&Name::new(record.name))
+                            .copied()
+                            .unwrap_or(EntryType::Orphan),
+                        parent_directory: String::new(),
                         name_utf16: record.name.encode_utf16().chain(Some(0)).collect(),
                         name: record.name.to_owned(),
                         comment: record.comment.into_owned(),
@@ -632,8 +713,8 @@ fn read_description(
         None => Vec::new(),
     };
     entries.sort_by(|a, b| {
-        b.directory
-            .cmp(&a.directory)
+        (b.kind == EntryType::Directory)
+            .cmp(&(a.kind == EntryType::Directory))
             .then_with(|| compare_names(&a.name_utf16, &b.name_utf16))
     });
     entries
