@@ -97,8 +97,8 @@ GitHub Actions 在 push 和 pull request 时自动执行上述检查，也支持
 发布前更新 `Cargo.toml` 和 `Cargo.lock` 中的版本号，准备并确认 `docs/releases/<标签>.md` 中的发布笔记，将代码与发布笔记提交并推送，再推送对应标签，例如：
 
 ```powershell
-git tag v0.3.1
-git push origin v0.3.1
+git tag v0.3.2
+git push origin v0.3.2
 ```
 
 用户可在 [GitHub Releases](https://github.com/Myraxion/dion/releases) 下载 `dion.exe`。
