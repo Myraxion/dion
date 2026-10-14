@@ -109,6 +109,10 @@ impl Diagnostic {
                 "--tree 和 --long 不能同时使用",
             ),
             Self::HelpUsage => ("Usage: dion help [command]", "用法：dion help [command]"),
+            Self::VersionUsage => (
+                "Version query only accepts --json and --lang alongside --version or -V",
+                "版本查询仅允许 --version 或 -V 与 --json、--lang 组合",
+            ),
             Self::UnknownHelpCommand => ("Unknown help command", "未知的帮助命令"),
             Self::ListOptionsOnly => (
                 "--long, --recursive, --tree, --all, --color, --everything and --everything-instance are only supported by list",

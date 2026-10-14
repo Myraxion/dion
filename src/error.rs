@@ -21,6 +21,7 @@ pub enum Diagnostic {
     UnknownOrRepeatedOption,
     TreeAndLongAreMutuallyExclusive,
     HelpUsage,
+    VersionUsage,
     UnknownHelpCommand,
     ListOptionsOnly,
     CommandUsage,

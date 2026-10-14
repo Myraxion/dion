@@ -57,6 +57,7 @@ struct Arguments {
     tree: bool,
     include_excluded: bool,
     help: bool,
+    version: bool,
     color: Option<ColorMode>,
     everything: bool,
     everything_instance: Option<String>,
@@ -71,6 +72,7 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
     let mut tree = false;
     let mut include_excluded = false;
     let mut help = false;
+    let mut version = false;
     let mut color = None;
     let mut use_everything = false;
     let mut everything_instance = None;
@@ -95,6 +97,8 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
                 })?);
         } else if (arg == "--help" || arg == "-h") && !help {
             help = true;
+        } else if (arg == "--version" || arg == "-V") && !version {
+            version = true;
         } else if (arg == "--long" || arg == "-l") && !long {
             long = true;
         } else if (arg == "--recursive" || arg == "-r") && !recursive {
@@ -175,6 +179,7 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
         tree,
         include_excluded,
         help,
+        version,
         color,
         everything: use_everything,
         everything_instance,
@@ -184,6 +189,9 @@ fn parse_args(args: &[OsString]) -> Result<Arguments, Error> {
 fn execute(arguments: &Arguments, json: bool, language: Language) -> Result<u8, Error> {
     let args = &arguments.positional;
     let command = args.first().and_then(|arg| arg.to_str()).map(command_name);
+    if arguments.version && (!args.is_empty() || arguments.help || arguments.source.is_some()) {
+        return Err(Error::new("invalid_argument", Diagnostic::VersionUsage, 2));
+    }
     if arguments.help || args.first().is_some_and(|arg| arg == "help") {
         let topic = if args.first().is_some_and(|arg| arg == "help") {
             if args.len() > 2 {
@@ -235,6 +243,11 @@ fn execute(arguments: &Arguments, json: bool, language: Language) -> Result<u8, 
             Diagnostic::EverythingRequiresRecursiveOrTree,
             2,
         ));
+    }
+    if arguments.version {
+        return writeln!(io::stdout().lock(), "dion {}", env!("CARGO_PKG_VERSION"))
+            .map(|()| 0)
+            .map_err(|error| Error::new("io_error", error.to_string(), 1));
     }
     match command {
         Some("get") if args.len() == 2 && arguments.source.is_none() => get(args, json).map(|()| 0),

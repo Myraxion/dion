@@ -135,6 +135,8 @@ fn overview_routes_show_chinese_usage_options_and_key_defaults() {
             "--json",
             "--help",
             "-h",
+            "--version",
+            "-V",
             "当前目录",
             "--",
             "条目自身",
@@ -162,7 +164,10 @@ fn english_overview_does_not_expose_language_selection() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(0), "{output:?}");
-    assert!(!String::from_utf8(output.stdout).unwrap().contains("--lang"));
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(!text.contains("--lang"));
+    assert!(text.contains("--version"));
+    assert!(text.contains("-V"));
 }
 
 #[test]

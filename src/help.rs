@@ -10,6 +10,7 @@ pub const OVERVIEW: &str = r#"Dion — 文件与文件夹备注
   dion set <path> (<comment> | --stdin|-i | --comment-file|-f <file> | --edit|-e)
   dion remove <path>
   dion help [command]
+  dion --version|-V
 
 命令：
   get (view, cat)          查看条目自身的备注
@@ -20,8 +21,9 @@ pub const OVERVIEW: &str = r#"Dion — 文件与文件夹备注
 括号内为命令别名；help <别名> 和 <别名> -h 显示对应命令帮助。
 
 全局参数：
-  --json, -j  输出 JSON；帮助仍为文本
+  --json, -j  输出 JSON；帮助与版本查询仍为文本
   --help, -h  显示帮助
+  --version, -V  查询版本；仅可搭配 JSON 或语言选项
   --          结束选项解析，以 - 开头的路径或正文放在其后
 
 选项分开输入；不支持短选项连写、紧连传值或等号传值。
@@ -37,6 +39,7 @@ Usage:
   dion set <path> (<comment> | --stdin|-i | --comment-file|-f <file> | --edit|-e)
   dion remove <path>
   dion help [command]
+  dion --version|-V
 
 Commands:
   get (view, cat)          Show a file or folder comment
@@ -47,8 +50,9 @@ Commands:
 Names in parentheses are aliases. Use help <alias> or <alias> -h for command help.
 
 Global options:
-  --json, -j              Output JSON; help remains plain text
+  --json, -j              Output JSON; help and version remain plain text
   --help, -h              Show help
+  --version, -V           Show version; only accepts JSON or language options alongside it
   --                      End option parsing; put paths or comments starting with - after it
 
 Options take separate arguments. Combined short options, attached values, and = values are not supported.

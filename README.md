@@ -6,7 +6,7 @@ Language / 语言： [English](README.en.md) | 简体中文
 
 ## 核心特性
 
-- **单文件运行**：适用于 Windows 10/11 x64，无需安装 Rust 或额外运行库；当前本地 Release exe 为 604,160 字节（590 KiB）。
+- **单文件运行**：适用于 Windows 10/11 x64，无需安装 Rust 或额外运行库；当前本地 Release exe 为 605,696 字节（591.5 KiB）。
 - **四个基础命令**：查看单条备注、列出目录备注、设置或覆盖备注、显式删除备注。
 - **列表展示**：目录优先、名称自然排序，默认双栏对齐，支持 `--long`（`-l`）、`--recursive`（`-r`）、`--tree`、通过 Everything 索引加速递归查询及名称自动着色。
 - **Unicode 与多行**：支持中文、Emoji、含空格的名称和多行正文，保留缩进、首尾空白和空行。
@@ -23,6 +23,7 @@ Language / 语言： [English](README.en.md) | 简体中文
 
 ```
 dion help [command]
+dion --version|-V
 dion [--json|-j] get <path>
 dion [--json|-j] set <path> (<comment> | --comment-file|-f <file> | --stdin|-i | --edit|-e)
 dion [--json|-j] list [directory] [--long|-l | --tree|-t] [--recursive|-r] [--everything [--everything-instance <name>]] [--all|-a] [--color auto|always|never]
@@ -38,7 +39,7 @@ dion [--json|-j] remove <path>
 | `set` | 无 |
 | `remove` | `rm`、`unset`、`del` |
 
-选项短写：`--json/-j`、`--help/-h`、`--long/-l`、`--recursive/-r`、`--tree/-t`、`--all/-a`、`--stdin/-i`、`--comment-file/-f`、`--edit/-e`。例如：
+选项短写：`--json/-j`、`--help/-h`、`--version/-V`、`--long/-l`、`--recursive/-r`、`--tree/-t`、`--all/-a`、`--stdin/-i`、`--comment-file/-f`、`--edit/-e`。例如：
 
 ```text
 dion cat file.txt
@@ -77,7 +78,8 @@ dion unset file.txt -j
 ### 通用选项与特性
 
 - **获取帮助**：支持 `dion help [command]` 以及各命令的 `-h` / `--help` 参数查看用途、用法、参数及关键默认行为。
-- **结构化输出**：全局支持 `--json` 输出机器可读的 JSON 格式及稳定退出码。
+- **查询版本**：`dion --version` 或 `dion -V` 输出 `dion <版本号>` 加换行并以 0 退出，版本号取自编译时的 `Cargo.toml`。仅可搭配 `--json`、`--lang`，始终输出相同文本；与操作命令、操作选项或帮助混用时报参数错误。
+- **结构化输出**：全局支持 `--json` 输出机器可读的 JSON 格式及稳定退出码，帮助与版本查询仍为文本。
 - **作用对象区分**：`get`、`set`、`remove` 操作指定条目自身的备注（记录保存在其父目录中）；`list` 查询指定目录内部条目的备注。
 
 ## 构建与发布

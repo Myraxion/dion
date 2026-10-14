@@ -20,6 +20,7 @@ Record names are matched case-insensitively using the Windows ordinal comparison
 
 ```text
 dion help [command]
+dion --version|-V
 dion [--lang <en|zh-CN|auto>] [--json|-j] get <path>
 dion [--lang <en|zh-CN|auto>] [--json|-j] set <path> (<comment> | --comment-file|-f <file> | --stdin|-i | --edit|-e)
 dion [--lang <en|zh-CN|auto>] [--json|-j] list [directory] [--long|-l | --tree|-t] [--recursive|-r] [--everything [--everything-instance <name>]] [--all|-a] [--color auto|always|never]
@@ -53,7 +54,8 @@ Language affects program-generated help and diagnostics. It does not change comm
 ### General options
 
 - `--lang <en|zh-CN|auto>` selects the program language; `DION_LANG` sets a default.
-- `--json` (`-j`) writes machine-readable JSON and stable exit codes. It does not change the output mode for help.
+- `--json` (`-j`) writes machine-readable JSON and stable exit codes. Help and version queries remain plain text.
+- `--version` (`-V`) prints `dion <version>` followed by a newline and exits with code 0. The version comes from the build's `Cargo.toml`. Only `--json` and `--lang` may accompany it; neither changes the version text. Combining it with commands, operation options, or help is an argument error.
 
 Flat `list` JSON entries contain `type` (`file`, `directory`, or `orphan`), `parent_directory`, `name`, and `comment`. The parent directory is relative to the query's starting directory, uses backslashes without a trailing separator, and is `""` for records in the starting directory. `name` preserves the original record spelling without a directory prefix.
 

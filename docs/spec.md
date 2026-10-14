@@ -20,10 +20,11 @@ dion [--json|-j] set <path> --edit|-e
 dion [--json|-j] remove <path>
 dion [--json|-j] --help | -h | help [command]
 dion [--json|-j] <command> --help | -h
+dion [--json|-j] [--lang <en|zh-CN|auto>] --version | -V
 ```
 
 - 命令别名：`view`、`cat` 对应 `get`；`ls` 对应 `list`；`rm`、`unset`、`del` 对应 `remove`。`set` 保留原名，无额外别名。别名与完整命令的操作、选项范围、输出及退出码一致。
-- 短选项与长选项等价：`--json/-j`、`--help/-h`、`--long/-l`、`--recursive/-r`、`--tree/-t`、`--all/-a`、`--stdin/-i`、`--comment-file/-f`、`--edit/-e`。`--color`、`--everything`、`--everything-instance` 没有短选项。后文长选项的规则同样适用于对应短选项。
+- 短选项与长选项等价：`--json/-j`、`--help/-h`、`--version/-V`、`--long/-l`、`--recursive/-r`、`--tree/-t`、`--all/-a`、`--stdin/-i`、`--comment-file/-f`、`--edit/-e`。`--color`、`--everything`、`--everything-instance` 没有短选项。后文长选项的规则同样适用于对应短选项。
 - 命令及选项区分大小写，只接受明确指定的写法，不识别任意前缀。选项须按独立参数输入，不支持短选项连写、选项与值紧连或等号传值；`-f` 的文件名放在下一个参数中。
 - 重复选项（包括长短同义组合）报 `invalid_argument`、退出码 2；正文来源互斥、列表模式互斥、命令范围和 `--` 分隔规则保持一致。`--everything-instance` 只能与 `--everything` 组合，并消耗下一个参数作为实例名称。
 
@@ -34,6 +35,14 @@ dion [--json|-j] <command> --help | -h
 - 帮助按当前语言显示，命令、参数及环境变量名称保留英文；总览和子命令帮助仅包含用途、用法、参数及关键默认行为，不包含示例和实现细节。语言选择规则见下文。
 - 帮助写 stdout，退出码 0，stderr 为空；带 `--json` 时仍为文本，不包装 JSON。帮助不执行备注读取、列表遍历、修改、正文输入读取或编辑器启动。
 - 沿用选项解析和 `--` 分隔规则；`--` 后的 `--help`、`-h` 是普通路径或正文。未知帮助主题或 `help` 的多余位置参数报 `invalid_argument`（退出码 2）；未知/重复选项、互斥列表模式或输入来源仍在参数解析时报错。
+
+## 版本查询
+
+- 独立入口为 `dion --version` 或 `dion -V`，可搭配 `--json/-j`、`--lang`，选项顺序沿用现有规则。
+- stdout 输出 `dion <版本号>` 加换行，stderr 为空，退出码 0；版本号取自编译时的 `Cargo.toml` 包版本，不附加 Git 提交号、构建时间或许可证信息。
+- 版本输出不受语言影响，带 `--json` 时仍为文本。版本查询不读取备注或正文输入、不遍历目录、不修改文件、不启动编辑器。
+- 与命令、其他位置参数、操作选项、`--help/-h` 或 `help` 混用报 `invalid_argument`，退出码 2；未知、重复选项及无效语言选项沿用现有参数校验，`--version -V` 视为重复。
+- 参数错误时 stdout 为空，stderr 诊断沿用当前语言和 JSON 错误契约；`--` 后的 `--version`、`-V` 是普通路径或正文。
 
 ## 程序语言
 
